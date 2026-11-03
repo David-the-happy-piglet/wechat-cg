@@ -38,9 +38,26 @@ def ensure_runtime_schema() -> None:
         },
         "articles": {
             "target_length": "INTEGER DEFAULT 1200",
+            "content_type": "VARCHAR(40) DEFAULT 'health_article'",
+            "story_mode": "VARCHAR(40) DEFAULT 'auto'",
         },
         "automation_plans": {
+            "emotional_title_reference": "BOOLEAN NOT NULL DEFAULT FALSE",
             "target_length": "INTEGER",
+            "content_type": "VARCHAR(40) DEFAULT 'health_article'",
+            "story_mode": "VARCHAR(40) DEFAULT 'auto'",
+        },
+        "video_projects": {
+            "actual_duration_ms": "INTEGER",
+            "research_json": "TEXT DEFAULT '{}'",
+            "review_json": "TEXT DEFAULT '{}'",
+        },
+        "video_scenes": {
+            "overlay_labels_json": "TEXT DEFAULT '[]'",
+            "image_source_page_url": "TEXT",
+            "image_source_author": "TEXT",
+            "image_license_name": "VARCHAR(120)",
+            "image_license_url": "TEXT",
         },
     }
     with engine.begin() as connection:

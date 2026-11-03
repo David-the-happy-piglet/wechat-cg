@@ -1,13 +1,23 @@
 import json
 from datetime import UTC, datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from .config import settings
+from .application.audiences import (
+    AudienceNotAvailableError,
+    require_enabled_audience,
+)
+from .application.automation_plans import (
+    AutomationPlanNotFoundError,
+    InvalidTimezoneError,
+    create_automation_plan,
+    update_automation_plan,
+)
+from .config import settings, wechat_settings_for_content
+from .content_workflows import content_workflow_metadata
 from .database import get_db
 from .models import (
     Article,
@@ -43,17 +53,33 @@ from .services.generator import generate_article
 from .services.llm import provider_catalog
 from .services.publishing import upload_article_to_draft
 from .services.usage import token_usage_summary
+from .services.video.speech import speech_voice_options
 from .services.wechat import WechatClient
 
 router = APIRouter(prefix="/api")
 wechat_client = WechatClient(settings)
+emotional_wechat_client = WechatClient(wechat_settings_for_content(settings, "emotional_article"))
 
 
-def _validate_timezone(name: str) -> None:
+def _wechat_client_for(content_type: str) -> WechatClient:
+    return emotional_wechat_client if content_type == "emotional_article" else wechat_client
+
+
+@router.get("/wechat/status")
+def wechat_connection_status(content_type: str = "health_article"):
+    if content_type not in {"health_article", "emotional_article", "micro_horror"}:
+        raise HTTPException(status_code=422, detail="Unsupported content_type")
     try:
-        ZoneInfo(name)
-    except ZoneInfoNotFoundError as exc:
-        raise HTTPException(status_code=422, detail=f"Unknown timezone: {name}") from exc
+        return _wechat_client_for(content_type).check_connection()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _enabled_audience_or_404(session: Session, slug: str) -> AudienceProfile:
+    try:
+        return require_enabled_audience(session, slug)
+    except AudienceNotAvailableError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def get_article_or_404(session: Session, article_id: int) -> Article:
@@ -135,7 +161,29 @@ def list_providers():
                 )
             ),
         },
+        "speech": {
+            "provider": settings.speech_provider,
+            "model": (
+                settings.speech_model
+                if settings.speech_provider == "minimax"
+                else "local-wave"
+            ),
+            "voice": settings.speech_voice,
+            "voices": speech_voice_options(settings),
+            "configured": (
+                settings.speech_provider == "mock"
+                or (
+                    settings.speech_provider == "minimax"
+                    and bool(settings.minimax_api_key)
+                )
+            ),
+        },
     }
+
+
+@router.get("/content-workflows")
+def list_content_workflow_metadata():
+    return content_workflow_metadata()
 
 
 @router.get("/token-usage")
@@ -158,25 +206,16 @@ def list_automation_plans(session: Session = Depends(get_db)):
     response_model=AutomationPlanRead,
     status_code=status.HTTP_201_CREATED,
 )
-def create_automation_plan(
+def create_automation_plan_endpoint(
     data: AutomationPlanCreate,
     session: Session = Depends(get_db),
 ):
-    _validate_timezone(data.timezone)
-    audience = session.scalar(
-        select(AudienceProfile).where(
-            AudienceProfile.slug == data.audience_slug,
-            AudienceProfile.enabled.is_(True),
-        )
-    )
-    if not audience:
-        raise HTTPException(status_code=404, detail="Audience not found or disabled")
-    values = data.model_dump(exclude={"audience_slug"})
-    plan = AutomationPlan(audience_profile_id=audience.id, **values)
-    plan.audience = audience
-    session.add(plan)
-    session.commit()
-    session.refresh(plan)
+    try:
+        plan = create_automation_plan(session, data)
+    except AudienceNotAvailableError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidTimezoneError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return automation_plan_dict(plan)
 
 
@@ -184,40 +223,17 @@ def create_automation_plan(
     "/automation/plans/{plan_id}",
     response_model=AutomationPlanRead,
 )
-def update_automation_plan(
+def update_automation_plan_endpoint(
     plan_id: int,
     data: AutomationPlanUpdate,
     session: Session = Depends(get_db),
 ):
-    plan = session.scalar(
-        select(AutomationPlan)
-        .where(AutomationPlan.id == plan_id)
-        .options(selectinload(AutomationPlan.audience))
-    )
-    if not plan:
-        raise HTTPException(status_code=404, detail="Automation plan not found")
-    values = data.model_dump(exclude_unset=True)
-    audience_slug = values.pop("audience_slug", None)
-    if audience_slug:
-        audience = session.scalar(
-            select(AudienceProfile).where(
-                AudienceProfile.slug == audience_slug,
-                AudienceProfile.enabled.is_(True),
-            )
-        )
-        if not audience:
-            raise HTTPException(
-                status_code=404,
-                detail="Audience not found or disabled",
-            )
-        plan.audience_profile_id = audience.id
-        plan.audience = audience
-    if "timezone" in values:
-        _validate_timezone(values["timezone"])
-    for key, value in values.items():
-        setattr(plan, key, value)
-    session.commit()
-    session.refresh(plan)
+    try:
+        plan = update_automation_plan(session, plan_id, data)
+    except (AutomationPlanNotFoundError, AudienceNotAvailableError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidTimezoneError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return automation_plan_dict(plan)
 
 
@@ -263,14 +279,7 @@ def create_article(
     data: ArticleGenerateRequest,
     session: Session = Depends(get_db),
 ):
-    audience = session.scalar(
-        select(AudienceProfile).where(
-            AudienceProfile.slug == data.audience_slug,
-            AudienceProfile.enabled.is_(True),
-        )
-    )
-    if not audience:
-        raise HTTPException(status_code=404, detail="Audience not found or disabled")
+    audience = _enabled_audience_or_404(session, data.audience_slug)
     try:
         article = generate_article(session, data, audience, settings)
     except Exception as exc:
@@ -284,14 +293,7 @@ def compare_articles(
     data: ArticleComparisonRequest,
     session: Session = Depends(get_db),
 ):
-    audience = session.scalar(
-        select(AudienceProfile).where(
-            AudienceProfile.slug == data.audience_slug,
-            AudienceProfile.enabled.is_(True),
-        )
-    )
-    if not audience:
-        raise HTTPException(status_code=404, detail="Audience not found or disabled")
+    audience = _enabled_audience_or_404(session, data.audience_slug)
 
     base_request = data.model_dump(exclude={"providers"})
     articles = []
@@ -310,6 +312,8 @@ def compare_articles(
             errors.append({"provider": provider, "error": str(exc)})
     return {
         "topic": data.topic,
+        "content_type": data.content_type,
+        "story_mode": data.story_mode,
         "audience_slug": data.audience_slug,
         "articles": articles,
         "errors": errors,
@@ -327,7 +331,7 @@ def upload_wechat_draft(
             session,
             article,
             settings,
-            client=wechat_client,
+            client=_wechat_client_for(article.content_type),
         )
         return PublishResult(
             article_id=article.id,
@@ -349,9 +353,12 @@ def publish_article(
     article = get_article_or_404(session, article_id)
     if not article.wechat_media_id:
         raise HTTPException(status_code=409, detail="Create a WeChat draft first")
+    account_client = _wechat_client_for(article.content_type)
+    if account_client.enabled and article.wechat_media_id.startswith("mock-draft-"):
+        raise HTTPException(status_code=409, detail="请先上传真实微信草稿")
     try:
-        if wechat_client.enabled:
-            publish_id = wechat_client.publish(article.wechat_media_id)
+        if account_client.enabled:
+            publish_id = account_client.publish(article.wechat_media_id)
             message = "Article submitted for WeChat publishing"
             article.status = "publishing"
         else:

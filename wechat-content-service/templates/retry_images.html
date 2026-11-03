@@ -1,0 +1,11 @@
+{% if run.article and run.article.status == 'image_pending' and not run.article.wechat_media_id %}
+  {% if run.status == 'failed' %}
+  <form method="post" action="/admin/articles/{{ run.article_id }}/retry-images"
+        onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='正在提交…'">
+    <button type="submit">重试配图</button>
+  </form>
+  <p class="muted">额度恢复后可重试，仅补齐缺失图片。{% if run.plan.auto_upload_draft %}完成后按原计划自动上传草稿箱。{% endif %}</p>
+  {% elif run.status in ['pending', 'running'] %}
+  <p class="muted">{{ '配图任务排队中，等待后台处理' if run.status == 'pending' else '配图任务执行中' }}，稍后刷新查看。</p>
+  {% endif %}
+{% endif %}

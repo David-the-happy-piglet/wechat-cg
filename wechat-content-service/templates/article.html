@@ -2,26 +2,41 @@
 {% block title %}{{ article.selected_title }}{% endblock %}
 {% block content %}
 <h1>{{ article.selected_title }}</h1>
+{% if manual_story %}
+<p class="notice">上方是推送标题；正文标题“{{ manual_story.title }}”显示在下方公众号预览中。<a href="/admin/stories/manual/{{ manual_story.id }}">返回工作台编辑、配图与审核</a></p>
+{% endif %}
 <p>
+  <span class="tag">
+    {{ content_workflow.short_name }}
+  </span>
+  {% if content_workflow.supports_story_modes %}
+  <span class="tag">
+    {{ story_mode_label }}
+  </span>
+  {% endif %}
+  {% if article.content_type in ['health_article', 'emotional_article'] %}
   <span class="tag">{{ article.audience.name }}</span>
+  {% else %}
+  <span class="tag">成人微恐 · 克制表达</span>
+  {% endif %}
   <span class="tag">{{ article.category }}</span>
   <span class="tag">目标约 {{ article.target_length }} 字</span>
   <span class="tag">{{ article.status }}</span>
   <span class="tag">{{ article.llm_provider }} / {{ article.model_name }}</span>
 </p>
 
-{% if flags %}
-<section class="card" style="border-color:#d58b76">
-  <h2>安全提醒</h2>
-  {% for flag in flags %}<p>{{ flag }}</p>{% endfor %}
-</section>
-{% endif %}
-
 <div class="grid" style="margin-top:20px">
   <section class="card">
     <h2>候选标题</h2>
     <ol>{% for title in titles %}<li>{{ title }}</li>{% endfor %}</ol>
     <h2>配图</h2>
+    {% if image_retry_message %}<p class="notice">{{ image_retry_message }}</p>{% endif %}
+    {% if image_retry_run and article.status == 'image_pending' %}
+      {% if image_retry_run.error_message %}
+      <p class="notice">配图失败：{{ image_retry_run.error_message }}</p>
+      {% endif %}
+      {% with run=image_retry_run %}{% include "retry_images.html" %}{% endwith %}
+    {% endif %}
     {% for asset in article.assets %}
       {% if asset.source_url %}
       <img src="{{ asset.source_url }}" alt="" style="width:100%;margin:8px 0;border-radius:8px">
@@ -53,8 +68,74 @@
   </section>
 </div>
 
+{% if story_outline %}
+<details class="card" style="margin-top:20px">
+  <summary><strong>故事方案（含剧透）</strong></summary>
+  <div style="padding-top:12px">
+    <p><strong>故事核：</strong>{{ story_outline.get("premise", "") }}</p>
+    <p>
+      <strong>主角诉求：</strong>{{ story_outline.get("protagonist", {}).get("desire", "") }}<br>
+      <strong>关键选择：</strong>{{ story_outline.get("protagonist", {}).get("critical_choice", "") }}
+    </p>
+    <p>
+      <strong>异常规则：</strong>{{ story_outline.get("anomaly", {}).get("rule", "") }}<br>
+      <strong>限制：</strong>{{ story_outline.get("anomaly", {}).get("limit", "") }}<br>
+      <strong>代价：</strong>{{ story_outline.get("anomaly", {}).get("cost", "") }}
+    </p>
+    <p>
+      <strong>读者前期理解：</strong>{{ story_outline.get("reader_assumption", "") }}<br>
+      <strong>实际真相：</strong>{{ story_outline.get("truth", "") }}
+    </p>
+    <h3>伏笔</h3>
+    <ol>
+      {% for clue in story_outline.get("foreshadows", []) %}
+      <li>
+        {{ clue.get("detail", "") }}：{{ clue.get("surface_meaning", "") }} →
+        {{ clue.get("true_meaning", "") }}
+      </li>
+      {% endfor %}
+    </ol>
+    <p><strong>结尾画面：</strong>{{ story_outline.get("ending", {}).get("final_action_or_image", "") }}</p>
+  </div>
+</details>
+{% endif %}
+
+{% if story_review %}
+<details class="card" style="margin-top:20px">
+  <summary><strong>审稿报告</strong> · {{ story_review.get("verdict", "") }}</summary>
+  <div style="padding-top:12px">
+    {% if story_review.get("scores") %}
+    <p>
+      因果 {{ story_review["scores"].get("causal_logic", "—") }} ·
+      动机 {{ story_review["scores"].get("motivation", "—") }} ·
+      伏笔公平 {{ story_review["scores"].get("foreshadow_fairness", "—") }} ·
+      不安递进 {{ story_review["scores"].get("unease_escalation", "—") }} ·
+      结尾余味 {{ story_review["scores"].get("ending_aftertaste", "—") }} ·
+      语言自然 {{ story_review["scores"].get("language_naturalness", "—") }}
+    </p>
+    {% endif %}
+    {% if story_review.get("issues") %}
+    <ul>
+      {% for issue in story_review["issues"] %}
+      <li>{{ issue.get("problem", "") }}{% if issue.get("fix") %}；修改：{{ issue["fix"] }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">未发现需要记录的结构性问题。</p>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+
 <section class="card" style="margin-top:20px">
   <h2>发布操作</h2>
+  <p class="muted">
+    {% if wechat_account.wechat_enabled %}
+    目标公众号：{{ "情感号" if article.content_type == "emotional_article" else "原有公众号" }}（{{ wechat_account.wechat_app_id }}）
+    {% else %}
+    当前为模拟模式，草稿不会上传到微信。
+    {% endif %}
+  </p>
   {% if draft_message %}
   <p style="padding:10px 12px;background:#edf7ef;color:#25613f;border-radius:8px">
     {{ draft_message }}
@@ -66,18 +147,16 @@
   </p>
   {% endif %}
 
-  {% if article.wechat_media_id %}
+  {% if manual_story and article.status not in ['approved', 'wechat_draft', 'wechat_draft_unverified'] %}
+  <p class="notice">成稿仍在审核中。请先回到<a href="/admin/stories/manual/{{ manual_story.id }}">手动写作工作台</a>确认文字和配图。</p>
+  {% elif article.wechat_media_id and not (wechat_account.wechat_enabled and article.wechat_media_id.startswith('mock-draft-')) %}
   <p>
-    微信草稿 media_id：
+    {{ "模拟草稿 ID" if article.wechat_media_id.startswith('mock-draft-') else "微信草稿 media_id" }}：
     <code style="word-break:break-all">{{ article.wechat_media_id }}</code>
   </p>
   <form method="post" action="/admin/articles/{{ article.id }}/wechat-draft">
     <button type="submit" style="background:#577465">重新核验微信草稿</button>
   </form>
-  {% elif article.status == "needs_review" and flags %}
-  <button type="button" disabled style="background:#9aa59e;cursor:not-allowed">
-    风险扫描未通过，暂不能上传
-  </button>
   {% else %}
   <form method="post" action="/admin/articles/{{ article.id }}/wechat-draft">
     <button type="submit">一键上传到公众号草稿箱</button>

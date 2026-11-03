@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% block title %}情感文章工作台{% endblock %}
+{% block content %}
+<style>
+  .emotion-hero { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; margin-bottom:20px; }
+  .emotion-hero h1 { margin:0 0 8px; color:#7e424d; }
+  .emotion-card { border-top:4px solid #c97b82; }
+  .direction-tags { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+  .direction-tags span { padding:6px 10px; border-radius:999px; background:#f9eeee; color:#8d4c55; font-size:13px; }
+  .field-help { margin:6px 0 0; color:#718078; font-size:14px; line-height:1.55; }
+  .principle { padding:12px 14px; border-left:3px solid #c97b82; background:#fff8f7; margin:10px 0; line-height:1.65; }
+  @media (max-width:720px) { .emotion-hero { display:block; } }
+</style>
+
+<div class="emotion-hero">
+  <div>
+    <h1>情感文章工作台</h1>
+    <p class="muted">面向恋爱中的男女，以女性读者为主。覆盖情感安慰、恋爱心理、星座恋爱性格、人生哲理及关系相处。</p>
+  </div>
+</div>
+
+<section class="card" style="margin-bottom:20px">
+  <strong>情感公众号</strong>
+  {% if wechat_account.wechat_enabled %}
+  <p class="muted">已启用独立账号：{{ wechat_account.wechat_app_id }}。情感文章将推送到此账号的草稿箱。</p>
+  {% else %}
+  <p class="muted">当前为模拟模式，文章不会上传到微信。请配置情感公众号的独立凭据。</p>
+  {% endif %}
+  <button type="button" id="wechat-check">检查公众号连接</button>
+  <p id="wechat-status" class="muted" role="status"></p>
+</section>
+<script>
+document.getElementById('wechat-check').addEventListener('click', async function () {
+  this.disabled = true;
+  const status = document.getElementById('wechat-status');
+  status.textContent = '正在检查…';
+  try {
+    const response = await fetch('/api/wechat/status?content_type=emotional_article');
+    const data = await response.json();
+    status.textContent = response.ok
+      ? data.message + (data.connected ? '，当前草稿 ' + data.draft_count + ' 篇。' : '')
+      : data.detail;
+  } catch (_) {
+    status.textContent = '连接检查失败，请稍后重试。';
+  } finally {
+    this.disabled = false;
+  }
+});
+</script>
+
+{% if generation_error %}
+<p class="notice error">生成失败：{{ generation_error }}</p>
+{% endif %}
+
+<section class="card" id="topic-reviews" style="margin-bottom:20px">
+  <h2>选题待审阅</h2>
+  <p class="muted">每日任务先准备一个选题，等你确认后才写正文。也可以改题、换题或放弃。</p>
+  {% for review in topic_reviews %}
+  <p><span class="tag">{{ {"awaiting_review":"待审阅", "approved":"已确认", "running":"生成中", "regenerating":"换题中", "failed":"生成失败"}.get(review.status, review.status) }}</span>
+  <a href="/admin/emotions/topics/{{ review.id }}">{{ review.topic }}</a>
+  <span class="muted"> · {{ "每日任务" if review.automation_run_id else "手动选题" }}</span></p>
+  {% else %}<p class="muted">暂时没有待审阅选题。可以在下方准备一个，或等待每日任务运行。</p>{% endfor %}
+</section>
+
+<div class="grid">
+  <section class="card emotion-card">
+    <h2>生成情感文章</h2>
+    <form method="post" action="/admin/emotions/generate">
+      <label for="category">内容方向</label>
+      <select id="category" name="category">
+        {% for direction in directions %}
+        <option value="{{ direction }}">{{ direction }}</option>
+        {% endfor %}
+      </select>
+
+      <p class="field-help">选择“清醒短句”：不描写具体场景，直接说透关系里的问题，每段不超过50字。其他方向使用共鸣型写法，默认侧重恋爱心理。只写恋爱和两个人之间的事，不写亲情、友情、职场。</p>
+
+      <label for="idea">灵感 / 具体主题（可选）</label>
+      <textarea id="idea" name="idea" maxlength="1000" style="min-height:105px"
+                placeholder="例如：为什么分手后明明知道不合适，还是忍不住反复看对方的动态？留空则根据内容方向自由选题。"></textarea>
+      <p class="field-help">可以写一个问题、一段关系处境、想表达的观点或标题雏形。</p>
+
+      <label for="reader_context">本篇读者处境</label>
+      <select id="reader_context" name="reader_context">
+        {% for context in reader_contexts %}
+        <option value="{{ context }}">{{ context }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="angle">切入角度（可选）</label>
+      <input id="angle" name="angle" maxlength="500"
+             placeholder="例如：写她把消息改了六遍才发出去，发完又把手机扣在桌上">
+
+      <div class="grid">
+        <div>
+          <label for="target_length">文章篇幅</label>
+          <select id="target_length" name="target_length">
+            <option value="800">约 800 字</option>
+            <option value="1200">约 1200 字</option>
+            <option value="1500" selected>约 1500 字</option>
+            <option value="2000">约 2000 字</option>
+            <option value="2500">约 2500 字</option>
+          </select>
+        </div>
+        <div>
+          <label for="provider">文字模型</label>
+          <select id="provider" name="provider">
+            <option value="openai">GPT-5.6 Sol（旗舰质量）</option>
+            <option value="openai-terra">GPT-5.6 Terra（均衡）</option>
+            <option value="openai-luna" selected>GPT-5.6 Luna（快速经济）</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="minimax">MiniMax</option>
+            <option value="kimi">Kimi</option>
+            <option value="mock">本地 Mock（测试）</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="headline_intensity">标题情绪张力</label>
+      <select id="headline_intensity" name="headline_intensity">
+        <option value="1">1 — 平静直接</option>
+        <option value="2">2 — 温和共鸣</option>
+        <option value="3">3 — 清晰吸引</option>
+        <option value="4" selected>4 — 强共鸣</option>
+        <option value="5">5 — 高张力</option>
+      </select>
+      <p class="field-help">标题是一句有具体依据的判断，25字以内、不用问号；张力只调整表达力度。</p>
+
+      {% with title_reference_enabled=false %}
+        {% include "emotional_title_reference.html" %}
+      {% endwith %}
+
+      <label>
+        <input type="checkbox" name="humanize" value="true" checked style="width:auto;margin-right:8px">
+        使用 Humanizer-zh 二次润色
+      </label>
+      <label>
+        <input type="checkbox" name="auto_upload_draft" value="true" checked style="width:auto;margin-right:8px">
+        生成完成后推送到公众号草稿箱
+      </label>
+
+      <details>
+        <summary>参考材料与写作 Prompt</summary>
+        <label for="reference_text">参考文字（可选）</label>
+        <textarea id="reference_text" name="reference_text" maxlength="12000"
+                  placeholder="粘贴参考文章、聊天片段或观点素材。系统会重新组织，不会冒充真实投稿或逐句改写。"
+                  style="min-height:170px"></textarea>
+        <label for="style_prompt">写作 Prompt</label>
+        <p class="field-help">恋爱心理会自动补充引用要求和已核对的来源：每篇至少一处心理学家观点或研究佐证，在正文自然提到心理学家和观点，不附论文链接。</p>
+        <textarea id="style_prompt" name="style_prompt" maxlength="4000"
+                  style="min-height:390px">{{ default_style_prompt }}</textarea>
+      </details>
+
+      <label><input type="checkbox" name="review_topic" value="true" checked style="width:auto;margin-right:8px">先审阅选题，确认后再生成正文</label>
+      <input type="hidden" name="review_topic" value="false" disabled id="skip-topic-review">
+      <p class="field-help">填写了具体主题时直接进入审阅，不再花 token 选题；留空时只生成一个选题。</p>
+      <p><button type="submit" style="background:#a95f69">准备选题，进入审阅</button></p>
+      <script>
+      const reviewCheckbox = document.querySelector('input[name="review_topic"][type="checkbox"]');
+      reviewCheckbox.addEventListener('change', function () {
+        document.getElementById('skip-topic-review').disabled = this.checked;
+        this.form.querySelector('button[type="submit"]').textContent = this.checked ? '准备选题，进入审阅' : '直接生成情感文章';
+      });
+      </script>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>内容范围</h2>
+    <div class="direction-tags">
+      {% for direction in directions %}<span>{{ direction }}</span>{% endfor %}
+    </div>
+    <h3 style="margin-top:24px">生成原则</h3>
+    <div class="principle"><strong>恋爱心理：从感受走到理解。</strong><br>从一个相处场景切入，每篇至少自然带入一处心理学家观点或研究佐证，在正文自然提到心理学家和观点，不附论文链接；说大白话，不给人贴标签。</div>
+    <div class="principle"><strong>一个处境，细节要准。</strong><br>写她做过却没说过的小动作，把说不出口的感受说清楚。</div>
+    <div class="principle"><strong>陪她看清，不布置任务。</strong><br>不写“你应该、建议你、学会……”，对方做了什么照实写，让读者自己判断。</div>
+    <div class="principle"><strong>标题落在具体事物上。</strong><br>一句判断，25字以内，不用问号；消息、等待、道歉等细节要在正文中撑住标题。</div>
+    <div class="principle"><strong>短段落，结尾留在眼前。</strong><br>每段一至三句，允许一句话一段；结尾停在一句话或一个画面，不喊口号。</div>
+    <div class="principle"><strong>星座用于娱乐观察。</strong><br>写她为什么去查星座，或一个轻松的相处场景，不下定论、不贬低，也不劝她别信。</div>
+  </section>
+</div>
+
+<section class="card emotion-card" style="margin-top:20px">
+  <h2>每日自动生产</h2>
+  <p class="muted">每天先按内容方向准备一个选题，显示在上方“选题待审阅”。你确认后才生成正文、润色和配图，并按计划推送草稿箱。</p>
+  <p>
+    <a class="button" href="#new-emotional-automation-plan"
+       onclick="document.getElementById('new-emotional-automation-plan').open=true">
+      新增定时任务
+    </a>
+  </p>
+
+  {% if automation_plans %}
+  <h3>定时任务列表</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>计划</th><th>内容方向</th><th>执行时间</th><th>模型 / 篇幅</th><th>草稿箱</th><th>状态</th><th>操作</th></tr>
+      </thead>
+      <tbody>
+        {% for plan in automation_plans %}
+        <tr>
+          <td><strong>{{ plan.name }}</strong></td>
+          <td title="{{ plan.directions }}">
+            <span class="tag">{{ plan.category }}</span><br>
+            {{ plan.directions[:45] }}{% if plan.directions|length > 45 %}…{% endif %}
+          </td>
+          <td>每天 {{ plan.run_time }}<br><span class="muted">{{ plan.timezone }}</span></td>
+          <td>{{ plan.provider }}<br><span class="muted">约 {{ plan.target_length or plan.audience.article_length }} 字</span></td>
+          <td>
+            {% if plan.auto_upload_draft %}<span class="tag">自动推送</span>{% else %}<span class="muted">仅生成</span>{% endif %}
+          </td>
+          <td>
+            {% if plan.enabled %}<span class="tag">已启用</span>{% else %}<span class="tag" style="background:#f1f1f1;color:#747474">已停用</span>{% endif %}
+          </td>
+          <td style="white-space:nowrap">
+            <a class="button" href="#emotional-plan-{{ plan.id }}"
+               onclick="document.getElementById('emotional-plan-{{ plan.id }}').open=true"
+               style="padding:7px 10px">编辑</a>
+            <form method="post" action="/admin/automation-plans/{{ plan.id }}/run-now" style="display:inline;margin:0">
+              <button type="submit" style="padding:7px 10px;background:#8a6268">立即运行</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:24px">任务配置</h3>
+  {% for plan in automation_plans %}
+  <details id="emotional-plan-{{ plan.id }}">
+    <summary>编辑：{{ plan.name }}</summary>
+    <form method="post" action="/admin/automation-plans/{{ plan.id }}" style="padding-bottom:16px">
+      <input name="content_type" type="hidden" value="emotional_article">
+      <input name="story_mode" type="hidden" value="auto">
+      <input name="audience_slug" type="hidden" value="relationship-readers">
+      <div class="grid">
+        <div>
+          <label>计划名称</label>
+          <input name="name" value="{{ plan.name }}" required>
+          <label>内容大方向</label>
+          <textarea name="directions" required placeholder="例如：分手后反复点开头像、吵完架独自洗澡、等对方先提起纪念日。">{{ plan.directions }}</textarea>
+          <label>默认分类</label>
+          <select name="category">
+            {% if plan.category not in directions %}<option value="{{ plan.category }}" selected>{{ plan.category }}</option>{% endif %}
+            {% for direction in directions %}<option value="{{ direction }}" {% if plan.category == direction %}selected{% endif %}>{{ direction }}</option>{% endfor %}
+          </select>
+          <p class="field-help">默认侧重恋爱心理，保留共鸣细节和有出处的解释；选择“失恋主题”时固定写失恋处境；选择“清醒短句”时不写场景，每段不超过50字。</p>
+        </div>
+        <div>
+          <label>文字模型</label>
+          <select name="provider">
+            {% for value, label in [
+              ("openai", "OpenAI · GPT-5.6 Sol"),
+              ("openai-terra", "OpenAI · GPT-5.6 Terra"),
+              ("openai-luna", "OpenAI · GPT-5.6 Luna"),
+              ("deepseek", "DeepSeek"), ("minimax", "MiniMax"),
+              ("kimi", "Kimi"), ("mock", "本地 Mock")
+            ] %}
+            <option value="{{ value }}" {% if plan.provider == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <label>每日执行时间（北京时间）</label>
+          <input name="run_time" type="time" value="{{ plan.run_time }}" required>
+          <input name="timezone" type="hidden" value="{{ plan.timezone }}">
+          <label>文章篇幅</label>
+          <select name="target_length">
+            <option value="0" {% if not plan.target_length %}selected{% endif %}>默认篇幅</option>
+            {% for value in [800, 1200, 1500, 2000, 2500] %}
+            <option value="{{ value }}" {% if plan.target_length == value %}selected{% endif %}>约 {{ value }} 字</option>
+            {% endfor %}
+          </select>
+          <label>标题情绪张力</label>
+          <select name="headline_intensity">
+            {% for value in [1, 2, 3, 4, 5] %}<option value="{{ value }}" {% if plan.headline_intensity == value %}selected{% endif %}>{{ value }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      {% with title_reference_enabled=plan.emotional_title_reference %}
+        {% include "emotional_title_reference.html" %}
+      {% endwith %}
+      <p class="automation-options">
+        <label style="display:inline-block;margin-right:18px"><input type="checkbox" name="humanize" value="true" {% if plan.humanize %}checked{% endif %} style="width:auto;margin-right:6px">自动润色</label>
+        <label style="display:inline-block;margin-right:18px"><input type="checkbox" name="auto_upload_draft" value="true" {% if plan.auto_upload_draft %}checked{% endif %} style="width:auto;margin-right:6px">自动推送草稿箱</label>
+        <label style="display:inline-block"><input type="checkbox" name="enabled" value="true" {% if plan.enabled %}checked{% endif %} style="width:auto;margin-right:6px">启用每日执行</label>
+      </p>
+      <button type="submit" style="background:#a95f69">保存计划</button>
+      <button type="submit" formaction="/admin/automation-plans/{{ plan.id }}/run-now" style="background:#8a6268;margin-left:8px">立即运行一次</button>
+    </form>
+  </details>
+  {% endfor %}
+  {% endif %}
+
+  <details id="new-emotional-automation-plan" {% if not automation_plans %}open{% endif %}>
+    <summary>新增定时任务</summary>
+    <form method="post" action="/admin/automation-plans">
+      <input name="content_type" type="hidden" value="emotional_article">
+      <input name="story_mode" type="hidden" value="auto">
+      <input name="audience_slug" type="hidden" value="relationship-readers">
+      <div class="grid">
+        <div>
+          <label>计划名称</label>
+          <input name="name" value="每日情感文章" required>
+          <label>内容大方向</label>
+          <textarea name="directions" required>{{ default_emotional_directions }}</textarea>
+          <label>默认分类</label>
+          <select name="category">{% for direction in directions %}<option value="{{ direction }}">{{ direction }}</option>{% endfor %}</select>
+          <p class="field-help">默认侧重恋爱心理，保留共鸣细节和有出处的解释；选择“失恋主题”时固定写失恋处境；选择“清醒短句”时不写场景，每段不超过50字。</p>
+        </div>
+        <div>
+          <label>文字模型</label>
+          <select name="provider">
+            <option value="openai">OpenAI · GPT-5.6 Sol</option>
+            <option value="openai-terra">OpenAI · GPT-5.6 Terra</option>
+            <option value="openai-luna" selected>OpenAI · GPT-5.6 Luna</option>
+            <option value="deepseek">DeepSeek</option><option value="minimax">MiniMax</option>
+            <option value="kimi">Kimi</option><option value="mock">本地 Mock</option>
+          </select>
+          <label>每日执行时间（北京时间）</label>
+          <input name="run_time" type="time" value="08:30" required>
+          <input name="timezone" type="hidden" value="Asia/Shanghai">
+          <label>文章篇幅</label>
+          <select name="target_length">
+            <option value="0">默认篇幅</option><option value="800">约 800 字</option>
+            <option value="1200">约 1200 字</option><option value="1500" selected>约 1500 字</option>
+            <option value="2000">约 2000 字</option><option value="2500">约 2500 字</option>
+          </select>
+          <label>标题情绪张力</label>
+          <select name="headline_intensity"><option value="3">3 — 清晰吸引</option><option value="4" selected>4 — 强共鸣</option><option value="5">5 — 高张力</option></select>
+        </div>
+      </div>
+      {% with title_reference_enabled=false %}
+        {% include "emotional_title_reference.html" %}
+      {% endwith %}
+      <p class="automation-options">
+        <label style="display:inline-block;margin-right:18px"><input type="checkbox" name="humanize" value="true" checked style="width:auto;margin-right:6px">自动润色</label>
+        <label style="display:inline-block;margin-right:18px"><input type="checkbox" name="auto_upload_draft" value="true" checked style="width:auto;margin-right:6px">自动推送草稿箱</label>
+        <label style="display:inline-block"><input type="checkbox" name="enabled" value="true" checked style="width:auto;margin-right:6px">启用每日执行</label>
+      </p>
+      <button type="submit" style="background:#a95f69">创建新计划</button>
+    </form>
+  </details>
+</section>
+
+<section class="card" style="margin-top:20px">
+  <h2>自动任务记录</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>计划时间</th><th>任务</th><th>选题</th><th>状态</th><th>重试</th><th>文章</th></tr></thead>
+      <tbody>
+        {% for run in automation_runs %}
+        <tr>
+          <td>{{ run.scheduled_for.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ run.plan.name }}</td>
+          <td>{{ run.topic or "等待选题" }}{% if run.error_message %}<br><span class="muted">{{ run.error_message }}</span>{% endif %}</td>
+          <td>{{ "待审阅选题" if run.status == "awaiting_review" else run.status }}</td><td>{{ run.retry_count }}</td>
+          <td>{% if run.article_id %}<a href="/admin/articles/{{ run.article_id }}">查看</a>{% include "retry_images.html" %}{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}<tr><td colspan="6" class="muted">还没有自动任务记录</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" style="margin-top:20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <h2>生成记录</h2>
+    <span class="muted">{{ recent_articles|length }} 篇最近记录</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>标题</th><th>方向</th><th>模型</th><th>状态</th><th>创建时间</th></tr></thead>
+      <tbody>
+        {% for article in recent_articles %}
+        <tr>
+          <td><a href="/admin/articles/{{ article.id }}">{{ article.selected_title }}</a></td>
+          <td>{{ article.category }}</td>
+          <td>{{ article.llm_provider }} / {{ article.model_name }}</td>
+          <td>{{ article.status }}</td>
+          <td>{{ article.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">还没有情感文章。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

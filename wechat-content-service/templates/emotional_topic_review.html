@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}情感选题审阅{% endblock %}
+{% block content %}
+<p><a href="/admin/emotions#topic-reviews">← 返回情感文章工作台</a></p>
+<section class="card">
+  <h1>先审选题，再写正文</h1>
+  {% set labels = {"awaiting_review":"待你审阅", "approved":"已确认，等待生成", "running":"正在生成", "regenerating":"正在换题", "completed":"已完成", "rejected":"已放弃", "failed":"生成失败"} %}
+  <p><span class="tag">{{ labels.get(review.status, review.status) }}</span> · {{ review.category }} · {{ saved.request.provider }} · 约 {{ saved.request.target_length or 1500 }} 字</p>
+  {% if error or review.error_message %}<p class="notice error">{{ error or review.error_message }}</p>{% endif %}
+  {% if run and run.error_message %}<p class="notice error">{{ run.error_message }}</p>{% endif %}
+  {% if review.status == "awaiting_review" %}
+  <p class="muted">这里只准备选题，还没有生成正文、润色或配图。直接改题和保存不消耗模型 token；“换一个选题”会调用一次选题模型。</p>
+  <form method="post" action="/admin/emotions/topics/{{ review.id }}/approve">
+    <label for="topic">准备写什么</label>
+    <textarea id="topic" name="topic" minlength="3" maxlength="300" required style="min-height:90px">{{ review.topic }}</textarea>
+    <label for="rationale">{{ "想点破的问题" if review.category == "清醒短句" else "切入场景" }} / 心理学佐证方向</label>
+    <textarea id="rationale" name="rationale" maxlength="3000" style="min-height:150px">{{ review.rationale }}</textarea>
+    <p class="field-help">{{ "写清想说透的关系问题，不必设计场景。" if review.category == "清醒短句" else "写清一个小场景和想说明的心理疑问即可。" }}这里是选题，不必写成文章标题。</p>
+    <p>确认后：生成正文{% if saved.request.humanize %} → 润色{% endif %} → 配图{% if saved.auto_upload_draft %} → 上传微信草稿箱{% endif %}。</p>
+    <button type="submit">确认这个选题，开始生成</button>
+    <button type="submit" formaction="/admin/emotions/topics/{{ review.id }}/save" style="background:#777">只保存修改</button>
+  </form>
+  <form method="post" action="/admin/emotions/topics/{{ review.id }}/regenerate" style="display:inline-block;margin-top:18px">
+    <button type="submit" style="background:#8a6268">换一个选题</button>
+  </form>
+  <form method="post" action="/admin/emotions/topics/{{ review.id }}/reject" style="display:inline-block;margin-top:18px">
+    <button type="submit" style="background:#777">放弃本次</button>
+  </form>
+  {% else %}
+    <h2>{{ review.topic }}</h2>
+    <p style="white-space:pre-wrap">{{ review.rationale }}</p>
+    {% if review.status == "approved" or review.status == "running" %}<p>后台会复用已确认的选题。<a href="/admin/emotions/topics/{{ review.id }}">刷新查看进度</a></p>{% endif %}
+    {% if review.status == "failed" and not review.automation_run_id %}
+    <form method="post" action="/admin/emotions/topics/{{ review.id }}/retry"><button>继续生成（复用已保存的正文与图片）</button></form>
+    {% endif %}
+  {% endif %}
+  {% if review.article_id %}<p><a class="button" href="/admin/articles/{{ review.article_id }}">查看文章</a></p>{% endif %}
+</section>
+{% endblock %}

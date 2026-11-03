@@ -16,7 +16,9 @@ def token_usage_summary(session: Session) -> dict:
             func.coalesce(func.sum(GenerationRun.total_tokens), 0).label("total_tokens"),
         )
         .where(
-            GenerationRun.step.in_(["article", "humanize"]),
+            GenerationRun.step.in_(
+                ["article", "humanize", "story_outline", "story_draft", "story_review"]
+            ),
             GenerationRun.status == "completed",
         )
         .group_by(GenerationRun.provider, GenerationRun.model)

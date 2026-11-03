@@ -4,17 +4,42 @@ import io
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 from PIL import Image, ImageDraw
 
 from ..config import Settings
+from .video.source import SourceExtractionError, validate_public_url
 
 logger = logging.getLogger(__name__)
+
+MINIMAX_PROMPT_MAX_CHARS = 1500
+WATERMARKED_STOCK_HOSTS = (
+    "alamy.com",
+    "dreamstime.com",
+    "lovepik.com",
+    "shutterstock.com",
+    "gettyimages.com",
+    "istockphoto.com",
+    "depositphotos.com",
+    "123rf.com",
+    "bigstockphoto.com",
+    "stock.adobe.com",
+)
+
+
+def is_stock_preview_url(url: str) -> bool:
+    try:
+        host = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return any(host == stock or host.endswith(f".{stock}") for stock in WATERMARKED_STOCK_HOSTS)
 
 
 class ImageProviderError(RuntimeError):
@@ -157,10 +182,18 @@ class MiniMaxImageProvider(ImageProvider):
         self.api_key = settings.minimax_api_key
         self.model = settings.minimax_image_model
         self.timeout = settings.image_timeout_seconds
+        self.max_attempts = max(1, settings.provider_max_attempts)
+        self.retry_base_seconds = max(0, settings.provider_retry_base_seconds)
         self.aigc_watermark = settings.aigc_watermark
         self.output_dir = Path(settings.generated_assets_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.public_base_url = settings.public_base_url.rstrip("/")
+
+    @staticmethod
+    def _composition_safe_prompt(prompt: str) -> str:
+        # Art direction belongs to the selected visual profile. The provider
+        # layer only enforces MiniMax's request-size limit.
+        return str(prompt or "").strip()[:MINIMAX_PROMPT_MAX_CHARS].rstrip()
 
     def generate(
         self,
@@ -169,25 +202,45 @@ class MiniMaxImageProvider(ImageProvider):
         position: int,
         search_query: object | None = None,
     ) -> dict[str, str | None]:
+        payload = {
+            "model": self.model,
+            "prompt": self._composition_safe_prompt(prompt),
+            "aspect_ratio": "16:9",
+            "response_format": "base64",
+            "n": 1,
+            "prompt_optimizer": False,
+            "aigc_watermark": self.aigc_watermark,
+        }
         response: httpx.Response | None = None
         try:
-            response = httpx.post(
-                f"{self.api_base}/image_generation",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
-                    "aspect_ratio": "16:9",
-                    "response_format": "base64",
-                    "n": 1,
-                    "prompt_optimizer": True,
-                    "aigc_watermark": self.aigc_watermark,
-                },
-                timeout=self.timeout,
-            )
+            for attempt in range(1, self.max_attempts + 1):
+                try:
+                    response = httpx.post(
+                        f"{self.api_base}/image_generation",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=payload,
+                        timeout=self.timeout,
+                    )
+                    break
+                except httpx.TransportError as exc:
+                    if attempt >= self.max_attempts:
+                        raise
+                    delay = self.retry_base_seconds * (2 ** (attempt - 1))
+                    logger.warning(
+                        "MiniMax image transport error on attempt %s/%s; "
+                        "retrying in %.1fs: %s",
+                        attempt,
+                        self.max_attempts,
+                        delay,
+                        exc,
+                    )
+                    if delay:
+                        time.sleep(delay)
+            if response is None:  # pragma: no cover - defensive guard
+                raise ImageProviderError("MiniMax image request produced no response")
             response.raise_for_status()
             body = response.json()
         except (
@@ -276,6 +329,148 @@ def normalize_search_query(value: object | None, fallback: str) -> str:
                 parts.append(part)
         return " ".join(parts) or fallback_query
     return fallback_query
+
+
+class DuckDuckGoImageProvider(ImageProvider):
+    """Search current web images for editorial news use.
+
+    Unlike Openverse and Wikimedia, these results are not guaranteed to have an
+    open license. The source page and an explicit review-required license label
+    are persisted with every downloaded image.
+    """
+
+    name = "duckduckgo"
+
+    def __init__(self, settings: Settings):
+        self.base_url = settings.duckduckgo_image_base_url.rstrip("/")
+        self.timeout = settings.image_timeout_seconds
+        self.max_bytes = settings.web_image_max_bytes
+        self.output_dir = Path(settings.generated_assets_dir).resolve()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.public_base_url = settings.public_base_url.rstrip("/")
+        self.headers = {
+            "User-Agent": settings.web_image_user_agent,
+            "Referer": f"{self.base_url}/",
+        }
+
+    def _search(self, query: str) -> list[dict[str, str]]:
+        try:
+            landing = httpx.get(
+                f"{self.base_url}/",
+                params={"q": query[:200]},
+                headers=self.headers,
+                follow_redirects=True,
+                timeout=self.timeout,
+            )
+            landing.raise_for_status()
+            match = re.search(r'vqd=["\']([^"\']+)', landing.text)
+            if not match:
+                raise ImageProviderError("DuckDuckGo image search returned no token")
+            response = httpx.get(
+                f"{self.base_url}/i.js",
+                params={
+                    "l": "wt-wt",
+                    "o": "json",
+                    "q": query[:200],
+                    "vqd": match.group(1),
+                    "f": ",,,",
+                    "p": "1",
+                },
+                headers=self.headers,
+                follow_redirects=True,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            results = response.json().get("results", [])
+        except (httpx.HTTPError, json.JSONDecodeError, AttributeError) as exc:
+            raise ImageProviderError(f"DuckDuckGo image search failed: {exc}") from exc
+
+        candidates: list[dict[str, str]] = []
+        for item in results:
+            image_url = str(item.get("image") or "")
+            source_page_url = str(item.get("url") or "")
+            try:
+                width = int(item.get("width") or 0)
+                height = int(item.get("height") or 0)
+            except (TypeError, ValueError):
+                width = height = 0
+            if not image_url or not source_page_url or width < 640 or height < 360:
+                continue
+            if is_stock_preview_url(image_url) or is_stock_preview_url(source_page_url):
+                continue
+            candidates.append(
+                {
+                    "download_url": image_url,
+                    "source_page_url": source_page_url,
+                    "source_author": str(item.get("source") or "Web publisher"),
+                }
+            )
+            if len(candidates) >= 16:
+                break
+        return candidates
+
+    def _download(
+        self,
+        candidate: dict[str, str],
+        position: int,
+    ) -> dict[str, str | None]:
+        try:
+            validate_public_url(candidate["download_url"])
+            response = httpx.get(
+                candidate["download_url"],
+                headers=self.headers,
+                follow_redirects=True,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            validate_public_url(str(response.url))
+        except (httpx.HTTPError, SourceExtractionError) as exc:
+            raise ImageProviderError(f"Web editorial image download failed: {exc}") from exc
+        content = response.content
+        if not content or len(content) > self.max_bytes:
+            raise ImageProviderError(
+                "Web editorial image is empty or exceeds WEB_IMAGE_MAX_BYTES"
+            )
+        try:
+            with Image.open(io.BytesIO(content)) as image:
+                image_format = image.format
+                image.verify()
+        except (OSError, ValueError) as exc:
+            raise ImageProviderError("Web search returned an invalid image") from exc
+        suffix = ".png" if image_format == "PNG" else ".jpg"
+        filename = f"{uuid4().hex}-{position}{suffix}"
+        path = self.output_dir / filename
+        path.write_bytes(content)
+        return {
+            "local_path": str(path),
+            "source_url": f"{self.public_base_url}/generated-assets/{filename}",
+            "source_kind": "web",
+            "source_page_url": candidate["source_page_url"],
+            "source_author": candidate["source_author"],
+            "license_name": "版权状态待确认（仅供新闻编辑审阅）",
+            "license_url": "",
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        title: str,
+        position: int,
+        search_query: object | None = None,
+    ) -> dict[str, str | None]:
+        query = normalize_search_query(search_query, title)
+        candidates = self._search(query)
+        if not candidates and query != title:
+            candidates = self._search(title)
+        if not candidates:
+            raise ImageProviderError(f"No editorial web image found for query: {query}")
+        last_error: ImageProviderError | None = None
+        for candidate in candidates:
+            try:
+                return self._download(candidate, position)
+            except ImageProviderError as exc:
+                last_error = exc
+        raise last_error or ImageProviderError("No editorial web image could be downloaded")
 
 
 class WikimediaImageProvider(ImageProvider):
@@ -598,8 +793,11 @@ class MixedImageProvider(ImageProvider):
         position: int,
         search_query: object | None = None,
     ) -> dict[str, str | None]:
-        # Keep the cover generated for visual consistency; use searched images
-        # for every other inline position.
+        # A web search fallback can return a watermarked stock preview. If the
+        # cover cannot be generated, let the job retry instead of uploading it.
+        if position == 0:
+            return self.ai_provider.generate(prompt, title, position, search_query)
+        # Use searched images for alternating inline positions.
         if position % 2 == 0:
             try:
                 return self.ai_provider.generate(
@@ -648,9 +846,12 @@ def _build_web_provider(settings: Settings) -> ImageProvider:
         return FallbackWebImageProvider(
             OpenverseImageProvider(settings),
             WikimediaImageProvider(settings),
+            DuckDuckGoImageProvider(settings),
         )
     if settings.web_image_provider == "wikimedia":
         return WikimediaImageProvider(settings)
+    if settings.web_image_provider == "duckduckgo":
+        return DuckDuckGoImageProvider(settings)
     raise ImageProviderError(f"Unsupported WEB_IMAGE_PROVIDER: {settings.web_image_provider}")
 
 

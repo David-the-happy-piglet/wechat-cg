@@ -14,8 +14,18 @@ def main() -> None:
         "--topic",
         default="过了55岁，晚饭后做哪些小事更有利于睡眠",
     )
-    parser.add_argument("--category", default="睡眠养生")
-    parser.add_argument("--audience", default="senior-wellness")
+    parser.add_argument("--category")
+    parser.add_argument("--audience")
+    parser.add_argument(
+        "--content-type",
+        choices=("health_article", "micro_horror"),
+        default="health_article",
+    )
+    parser.add_argument(
+        "--story-mode",
+        choices=("auto", "everyday_uncanny", "near_future"),
+        default="auto",
+    )
     parser.add_argument(
         "--headline-intensity",
         type=int,
@@ -29,13 +39,23 @@ def main() -> None:
     )
     parser.add_argument("--api-base", default="http://127.0.0.1:8000")
     args = parser.parse_args()
+    category = args.category or (
+        "微恐短篇" if args.content_type == "micro_horror" else "睡眠养生"
+    )
+    audience = args.audience or (
+        "micro-horror-readers"
+        if args.content_type == "micro_horror"
+        else "senior-wellness"
+    )
 
     response = httpx.post(
         f"{args.api_base.rstrip('/')}/api/articles/compare",
         json={
+            "content_type": args.content_type,
+            "story_mode": args.story_mode,
             "topic": args.topic,
-            "category": args.category,
-            "audience_slug": args.audience,
+            "category": category,
+            "audience_slug": audience,
             "title_count": 5,
             "image_count": 3,
             "headline_intensity": args.headline_intensity,

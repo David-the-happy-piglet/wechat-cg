@@ -15,8 +15,21 @@ services:
       timeout: 5s
       retries: 10
 
+  schema-migrate:
+    build: ./wechat-content-service
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-content_generator}:${DB_PASSWORD:-change-me}@db:5432/${DB_NAME:-content_generator}
+    depends_on:
+      db:
+        condition: service_healthy
+
   redis:
     image: redis:7
+    profiles: ["reserved-infra"]
     command:
       - redis-server
       - --requirepass
@@ -36,13 +49,14 @@ services:
 
   minio:
     image: minio/minio:latest
+    profiles: ["reserved-infra"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-now}
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -61,17 +75,20 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+psycopg://content_generator:${DB_PASSWORD:-change-me}@db:5432/${DB_NAME:-content_generator}
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-content_generator}:${DB_PASSWORD:-change-me}@db:5432/${DB_NAME:-content_generator}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
       GENERATED_ASSETS_DIR: /app/generated-assets
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       IMAGE_PROVIDER: ${IMAGE_PROVIDER:-placeholder}
       WECHAT_ENABLED: ${WECHAT_ENABLED:-false}
+      AUTO_CREATE_SCHEMA: "false"
     depends_on:
       db:
         condition: service_healthy
+      schema-migrate:
+        condition: service_completed_successfully
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - generated-assets:/app/generated-assets
     healthcheck:
@@ -79,7 +96,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz', timeout=5)"
       interval: 10s
       timeout: 5s
       retries: 10
@@ -94,7 +111,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL: postgresql+psycopg://content_generator:${DB_PASSWORD:-change-me}@db:5432/${DB_NAME:-content_generator}
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-content_generator}:${DB_PASSWORD:-change-me}@db:5432/${DB_NAME:-content_generator}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
       GENERATED_ASSETS_DIR: /app/generated-assets
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
@@ -102,6 +119,36 @@ services:
       WECHAT_ENABLED: ${WECHAT_ENABLED:-false}
       AUTOMATION_POLL_SECONDS: ${AUTOMATION_POLL_SECONDS:-30}
       AUTOMATION_MAX_RETRIES: ${AUTOMATION_MAX_RETRIES:-3}
+      AUTO_CREATE_SCHEMA: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      wechat-content-service:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - generated-assets:/app/generated-assets
+
+  video-worker:
+    build: ./wechat-content-service
+    command:
+      - python
+      - -m
+      - app.video_worker
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-content_generator}:${DB_PASSWORD:-change-me}@db:5432/${DB_NAME:-content_generator}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      GENERATED_ASSETS_DIR: /app/generated-assets
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER:-placeholder}
+      SPEECH_PROVIDER: ${SPEECH_PROVIDER:-mock}
+      VIDEO_WORKER_POLL_SECONDS: ${VIDEO_WORKER_POLL_SECONDS:-5}
+      VIDEO_MAX_RETRIES: ${VIDEO_MAX_RETRIES:-3}
+      VIDEO_STALE_MINUTES: ${VIDEO_STALE_MINUTES:-30}
+      AUTO_CREATE_SCHEMA: "false"
     depends_on:
       db:
         condition: service_healthy

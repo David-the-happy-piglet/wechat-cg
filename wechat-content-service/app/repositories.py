@@ -42,10 +42,6 @@ def update_audience(
 
 
 def seed_audiences(session: Session) -> None:
-    exists = session.scalar(select(AudienceProfile.id).limit(1))
-    if exists:
-        return
-
     defaults = [
         AudienceCreate(
             slug="senior-wellness",
@@ -99,7 +95,72 @@ def seed_audiences(session: Session) -> None:
                 "建议停药",
             ],
         ),
+        AudienceCreate(
+            slug="micro-horror-readers",
+            name="微恐短篇读者",
+            age_range="18+",
+            description="喜欢日常微恐、近未来寓言和公平反转的成年读者",
+            interests=[
+                "日常异样",
+                "近未来技术",
+                "社会规则",
+                "关系错位",
+                "伏笔反转",
+            ],
+            writing_style="克制、具体、短段落，以动作和细节推进，不解释寓意",
+            title_preferences=[
+                "熟悉场景里出现一个不对劲的细节",
+                "标题制造信息缺口但不泄露反转",
+                "避免夸张感叹号和恐怖词堆叠",
+            ],
+            article_length=1800,
+            image_style=(
+                "冷静克制的电影剧照感，中国当代日常场景，低饱和，"
+                "自然光影，留有空白，无文字，无血腥"
+            ),
+            prohibited_topics=[
+                "露骨血腥和虐杀细节",
+                "把精神疾病当作反转工具",
+                "伤害儿童的细节描写",
+                "照搬现有作品的设定或结局",
+            ],
+        ),
+        AudienceCreate(
+            slug="relationship-readers",
+            name="恋爱与情感成长读者",
+            age_range="18-40",
+            description="恋爱中的男女，以女性读者为主，也覆盖暧昧、分手、复合与单身成长阶段",
+            interests=[
+                "恋爱相处",
+                "分手修复",
+                "两性心理",
+                "沟通与边界",
+                "追求策略",
+                "星座恋爱性格",
+            ],
+            writing_style="共情但清醒，像有判断力的朋友，结合具体场景、沟通句式和行动步骤",
+            title_preferences=[
+                "为什么越……的人，越容易……",
+                "一段关系出现这些细节……",
+                "分手后真正需要做的……",
+            ],
+            article_length=1500,
+            image_style=(
+                "当代中国都市生活与亲密关系场景，真实自然，温暖克制，"
+                "柔和光线，有情绪但不煽情，无文字"
+            ),
+            prohibited_topics=[
+                "PUA、操控、跟踪、欺骗或羞辱",
+                "煽动性别仇恨与绝对化刻板印象",
+                "承诺百分百追到或必定复合",
+                "把星座当作科学诊断或命运预测",
+                "诊断精神疾病或替代专业心理支持",
+            ],
+        ),
     ]
+    existing_slugs = set(session.scalars(select(AudienceProfile.slug)).all())
     for item in defaults:
+        if item.slug in existing_slugs:
+            continue
         session.add(AudienceProfile(**audience_values(item)))
     session.commit()

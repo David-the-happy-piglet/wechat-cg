@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}微恐故事 · Claude 手动写作{% endblock %}
+{% block content %}
+<style>
+  .manual-steps { display:flex; flex-wrap:wrap; gap:8px; padding:0; list-style:none; }
+  .manual-steps li { background:#edf5ef; color:#356a4c; border-radius:999px; padding:8px 12px; }
+  .manual-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:14px; }
+  .manual-actions a { color:#356a4c; }
+  .manual-note { padding:12px 14px; background:#f7faf7; border-radius:9px; line-height:1.65; }
+  .manual-prompt { min-height:420px; font-family:inherit; line-height:1.65; }
+  .manual-body { min-height:460px; line-height:1.8; }
+</style>
+<h1>微恐故事 · Claude 手动写作</h1>
+<p class="muted">适合精品号：先审灵感，再复制 Prompt 到 Claude 聊天框；把成稿贴回后预览、配图、审核，最后推送草稿箱。</p>
+<ol class="manual-steps" aria-label="手动写作步骤">
+  <li>1 灵感与审核</li><li>2 复制 Prompt</li><li>3 Claude 写作</li><li>4 贴回、排版与配图</li><li>5 审核并推送草稿箱</li>
+</ol>
+<p class="manual-note">平台不会调用 Claude API。留空让平台提供灵感时，会调用当前配置的选题模型；自己填写灵感则不产生这一步的模型调用。</p>
+<p><a href="/admin/stories/automatic">查看原有站内生成流程</a></p>
+{% if error %}<p class="notice error">{{ error }}</p>{% endif %}
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+
+{% if not draft %}
+<section class="card">
+  <h2>1. 提出灵感</h2>
+  <form method="post" action="/admin/stories/manual/ideas">
+    <label for="idea">灵感 / 点子（可留空，由平台生成一条供你审核）</label>
+    <textarea id="idea" name="idea" maxlength="1000" placeholder="例如：一位房东发现所有退租的人都把钥匙留在同一个抽屉里。"></textarea>
+    <div class="grid">
+      <div><label for="story_mode">故事方向</label><select id="story_mode" name="story_mode">
+        {% for value, label in story_mode_options.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select></div>
+      <div><label for="folklore_element">民俗素材（民俗志异时使用）</label><select id="folklore_element" name="folklore_element">
+        {% for value, label in folklore_elements.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select></div>
+    </div>
+    <label for="target_length">目标字数</label><input id="target_length" type="number" name="target_length" min="500" max="6000" value="1800">
+    <label for="reader_boundary">读者边界</label><textarea id="reader_boundary" name="reader_boundary" required>{{ default_reader_boundary }}</textarea>
+    <label for="style_prompt">写作要求</label><textarea id="style_prompt" name="style_prompt" required style="min-height:260px">{{ default_style_prompt }}</textarea>
+    <div class="manual-actions"><button type="submit">保存灵感，进入审核</button></div>
+  </form>
+</section>
+{% else %}
+<section class="card">
+  <h2>1. 审核灵感 · #{{ draft.id }}</h2>
+  <p class="muted">状态：{{ {'idea_review':'待审核灵感','prompt_ready':'Prompt 已就绪','imported':'成稿待审核','approved':'成稿已审核通过'}.get(draft.status, draft.status) }}</p>
+  {% if draft.status == 'idea_review' %}
+  <form method="post" action="/admin/stories/manual/{{ draft.id }}/prompt">
+    <label for="review_idea">灵感（可修改，确认后才生成 Prompt）</label><textarea id="review_idea" name="idea" maxlength="1000" required>{{ draft.idea }}</textarea>
+    <p>方向：{{ story_mode_options.get(draft.story_mode, draft.story_mode) }}{% if draft.story_mode == 'folk_horror' %} · {{ folklore_elements.get(draft.folklore_element, '') }}{% endif %} · 约 {{ draft.target_length }} 字</p>
+    <label for="review_boundary">读者边界</label><textarea id="review_boundary" name="reader_boundary" required>{{ draft.reader_boundary }}</textarea>
+    <label for="review_style">写作要求</label><textarea id="review_style" name="style_prompt" required style="min-height:260px">{{ draft.style_prompt }}</textarea>
+    <div class="manual-actions"><button type="submit">确认灵感并生成 Claude Prompt</button></div>
+  </form>
+  {% else %}
+  <p><strong>已审核灵感：</strong>{{ draft.idea }}</p>
+  {% endif %}
+</section>
+
+{% if draft.prompt_text %}
+<section class="card" style="margin-top:20px">
+  <h2>2. 复制 Prompt 到 Claude</h2>
+  <textarea id="claude-prompt" class="manual-prompt" readonly aria-label="Claude 完整写作 Prompt">{{ draft.prompt_text }}</textarea>
+  <div class="manual-actions">
+    <button type="button" id="copy-prompt">复制完整 Prompt</button>
+    <a href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">打开 Claude 聊天框 ↗</a>
+    <span id="copy-status" role="status" aria-live="polite"></span>
+  </div>
+  {% if draft.status != 'approved' %}
+  <form method="post" action="/admin/stories/manual/{{ draft.id }}/refresh-prompt" class="manual-actions">
+    <button type="submit" style="background:#577465">按最新写作规范更新 Prompt</button>
+  </form>
+  {% endif %}
+  <p class="muted">请在 Claude 中手动粘贴并生成。满意后，把标题和正文分别贴到下面。</p>
+</section>
+
+<section class="card" style="margin-top:20px">
+  <h2>3. 贴回成稿并预览排版</h2>
+  {% if draft.status == 'approved' %}
+  <p>已审核通过。<a href="/admin/articles/{{ draft.article_id }}">查看最终预览与草稿箱操作</a></p>
+  {% else %}
+  <form method="post" action="/admin/stories/manual/{{ draft.id }}/import">
+    <label for="story_title">正文标题（读者打开文章后看到）</label><input id="story_title" name="title" maxlength="300" value="{{ draft.title }}" placeholder="短、具体，围绕一个物件或反常行为" required>
+    <label for="push_title">推送标题（公众号草稿箱使用）</label><input id="push_title" name="push_title" maxlength="300" value="{{ draft.push_title or draft.title }}" placeholder="用日常疑问建立钩子，不暴露故事类型" required>
+    <label for="story_summary">摘要（可选；建议不要剧透）</label><textarea id="story_summary" name="summary" style="min-height:80px">{{ draft.summary }}</textarea>
+    <label for="story_body">小说正文（至少两个自然段；不要粘贴标题）</label>
+    <textarea id="story_body" class="manual-body" name="body_text" required>{{ draft.body_text }}</textarea>
+    <div class="manual-actions"><button type="submit">保存成稿并预览</button>
+      {% if draft.article_id %}<a href="/admin/articles/{{ draft.article_id }}">查看当前排版预览</a>{% endif %}
+    </div>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if draft.article_id %}
+<section class="card" style="margin-top:20px">
+  <h2>4. 配图与最后审核</h2>
+  {% if draft.status == 'approved' %}
+  <p>成稿与配图已审核通过。前往<a href="/admin/articles/{{ draft.article_id }}">文章预览</a>，再手动推送公众号草稿箱。</p>
+  {% else %}
+  <p class="muted">当前有 {{ draft.article.assets|length }} 张配图。配图需由你点击生成；图像服务可能产生费用。</p>
+  <form method="post" action="/admin/stories/manual/{{ draft.id }}/images">
+    <label for="image_count">配图数量（含封面）</label><select id="image_count" name="image_count"><option value="1">1 张封面</option><option value="2" selected>1 张封面 + 1 张插图</option><option value="3">1 张封面 + 2 张插图</option></select>
+    <label for="cover_prompt">封面画面（可选；不写则根据灵感生成）</label><input id="cover_prompt" name="cover_prompt" placeholder="例如：旧公寓走廊尽头的一扇半开的门">
+    <label for="inline_prompt">插图画面（可选）</label><input id="inline_prompt" name="inline_prompt" placeholder="例如：夜里空无一人的楼梯间">
+    <div class="manual-actions"><button type="submit">生成配图并更新预览</button></div>
+  </form>
+  <p><a href="/admin/articles/{{ draft.article_id }}">检查标题、正文和配图排版</a></p>
+  <form method="post" action="/admin/stories/manual/{{ draft.id }}/approve">
+    <button type="submit" {% if not draft.article.assets %}disabled{% endif %}>我已审核成稿与配图，允许推送草稿箱</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+
+<section class="card" style="margin-top:20px">
+  <h2>最近的手动写作记录</h2>
+  {% if recent %}<div class="table-wrap"><table><thead><tr><th>灵感</th><th>状态</th><th>创建时间</th></tr></thead><tbody>
+    {% for item in recent %}<tr><td><a href="/admin/stories/manual/{{ item.id }}">{{ item.idea[:80] }}</a></td><td>{{ item.status }}</td><td>{{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="muted">还没有手动写作记录。</p>{% endif %}
+</section>
+<script>
+  const copyButton = document.getElementById('copy-prompt');
+  if (copyButton) copyButton.addEventListener('click', async () => {
+    const prompt = document.getElementById('claude-prompt');
+    try { await navigator.clipboard.writeText(prompt.value); document.getElementById('copy-status').textContent = '已复制'; }
+    catch (_) { prompt.select(); document.execCommand('copy'); document.getElementById('copy-status').textContent = '已复制；若未成功，请手动复制选中文字'; }
+  });
+</script>
+{% endblock %}

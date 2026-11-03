@@ -1,0 +1,710 @@
+{% extends "base.html" %}
+{% block title %}视频生成 · 内容生成器{% endblock %}
+{% block content %}
+<style>
+  .video-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr); gap:20px; align-items:start; }
+  .source-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:8px; }
+  .source-tabs label { margin:0; padding:10px; border:1px solid var(--line); border-radius:9px; text-align:center; cursor:pointer; font-weight:650; }
+  .source-tabs label:has(input:checked) { border-color:var(--green); background:#edf5ef; color:var(--green); }
+  .source-tabs input { width:auto; margin-right:5px; }
+  .form-columns { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .status-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .progress-track { height:10px; border-radius:999px; background:#e4eae6; overflow:hidden; }
+  .progress-bar { height:100%; width:0; background:linear-gradient(90deg,var(--green),#62a67c); transition:width .3s ease; }
+  .status-pill { border-radius:999px; background:#edf5ef; color:#356a4c; padding:5px 9px; font-size:13px; }
+  .video-preview { width:100%; aspect-ratio:16/9; border-radius:10px; background:#172019; margin-top:14px; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+  .button.secondary, button.secondary { background:#62766b; }
+  .button.warn, button.warn { background:#b6563d; }
+  .prompt-help { padding:10px 12px; border-radius:8px; background:#f5f7f5; color:#617069; font-size:13px; white-space:pre-wrap; max-height:130px; overflow:auto; }
+  .project-title { max-width:320px; }
+  .news-panel { margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:9px; background:#f8faf8; }
+  .research-list { margin:8px 0 0; padding-left:22px; }
+  @media (max-width:820px) {
+    .video-layout, .form-columns { grid-template-columns:1fr; }
+    .header-inner { align-items:flex-start; flex-direction:column; }
+  }
+</style>
+
+<h1>视频生成</h1>
+<p class="muted">把主题、原稿或文章链接改写成口语讲稿，再生成配图、配音、严格同步字幕和成片。</p>
+
+<div class="video-layout">
+  <section class="card">
+    <h2>新建视频</h2>
+    <form id="video-create-form">
+      <label for="workflow">内容工作流</label>
+      <select id="workflow">
+        <option value="explainer" selected>普通讲解 / 观点改写</option>
+        <option value="news_research">新闻 / 事件深度研究（多来源核验）</option>
+      </select>
+      <p class="muted" id="workflow_help">直接依据给定材料生成口语稿。</p>
+
+      <label>内容来源</label>
+      <div class="source-tabs">
+        <label><input type="radio" name="video_source_type" value="topic" checked>主题</label>
+        <label><input type="radio" name="video_source_type" value="text">文本 / 原稿</label>
+        <label><input type="radio" name="video_source_type" value="url">文章链接</label>
+      </div>
+
+      <label for="video_source_value" id="video_source_label">视频主题</label>
+      <textarea id="video_source_value" required style="min-height:90px"
+                placeholder="例如：为什么总在替别人操心？用阿德勒的课题分离解释"></textarea>
+
+      <div class="form-columns">
+        <div>
+          <label for="voice">人声风格</label>
+          <select id="voice" name="voice">
+            {% for voice in voices %}
+            <option value="{{ voice.id }}" {% if voice.id == default_voice %}selected{% endif %}>
+              {{ voice.name }} · {{ voice.description }}
+            </option>
+            {% endfor %}
+          </select>
+          <p class="muted">当前语音服务：{{ speech_provider }}</p>
+        </div>
+        <div>
+          <label for="provider">口语稿模型</label>
+          <select id="provider" name="provider">
+            <option value="minimax" selected>MiniMax · MiniMax-M3</option>
+            <option value="openai">OpenAI · GPT-5.6 Sol</option>
+            <option value="openai-terra">OpenAI · GPT-5.6 Terra</option>
+            <option value="openai-luna">OpenAI · GPT-5.6 Luna</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="kimi">Kimi</option>
+            <option value="mock">本地 Mock</option>
+          </select>
+          <p class="muted">当前图片服务：{{ image_provider }}</p>
+        </div>
+      </div>
+
+      <label for="script_prompt">口语稿补充 Prompt（可编辑）</label>
+      <textarea id="script_prompt" name="script_prompt"
+                placeholder="例如：像朋友聊天一样讲，少用专业术语；保留原文的关键论点和例子。"></textarea>
+      <p class="muted">会附加到既有的视频改写规范，不会覆盖 JSON、时长和安全约束。</p>
+
+      <details class="news-panel" id="news_options" hidden open>
+        <summary>新闻研究配置</summary>
+        <p class="muted">新闻模式至少核验两个独立来源，并保存 Fact Sheet。独立 LLM 事实审核当前默认关闭。</p>
+        <label for="news_angle">报道角度</label>
+        <select id="news_angle">
+          <option value="auto" selected>自动推荐</option>
+          <option value="straight_news">直接新闻</option>
+          <option value="curiosity">好奇点</option>
+          <option value="drama">事件冲突</option>
+          <option value="internet_reaction">网络反应</option>
+          <option value="timeline">时间线</option>
+          <option value="explainer">解释型</option>
+          <option value="follow_up">后续追踪</option>
+          <option value="nostalgia">旧闻回看</option>
+          <option value="rumor_investigation">传闻核查</option>
+        </select>
+        <div class="form-columns">
+          <div>
+            <label for="news_mechanical">机械处理</label>
+            <select id="news_mechanical" class="news-model" data-default="minimax"></select>
+            <label for="news_judgment">轻判断</label>
+            <select id="news_judgment" class="news-model" data-default="openai-terra"></select>
+          </div>
+          <div>
+            <label for="news_research">搜索研究</label>
+            <select id="news_research" class="news-model" data-default="openai"></select>
+            <label for="news_writer">内容创作</label>
+            <select id="news_writer" class="news-model" data-default="minimax"></select>
+            <label for="news_review">事实审核</label>
+            <select id="news_review" class="news-model" data-default="openai-terra"></select>
+          </div>
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:8px">
+          <input id="news_review_enabled" type="checkbox" style="width:auto;margin-top:3px">
+          <span>启用独立 LLM 新闻事实审核</span>
+        </label>
+        <p class="muted">关闭时不会调用审核模型，只做不消耗 Token 的事实编号一致性校验。</p>
+      </details>
+
+      <label for="visual_profile">图片生成范式</label>
+      <select id="visual_profile" name="visual_profile">
+        {% for profile in visual_profiles %}
+        <option value="{{ profile.profile_id }}" data-base-prompt="{{ profile.base_prompt|e }}">
+          {{ profile.name }}（{{ profile.profile_id }}）
+        </option>
+        {% endfor %}
+      </select>
+      <details>
+        <summary>查看当前范式的基础 Prompt</summary>
+        <div class="prompt-help" id="base_prompt_preview"></div>
+      </details>
+
+      <label style="display:flex;align-items:flex-start;gap:8px">
+        <input id="use_web_images" type="checkbox" style="width:auto;margin-top:3px">
+        <span>优先使用互联网上的真实图片（热点 / 新闻推荐）</span>
+      </label>
+      <label for="web_image_ratio">真实网络图片目标占比</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input id="web_image_ratio" type="range" min="90" max="100" step="1" value="95">
+        <output id="web_image_ratio_value" for="web_image_ratio">95%</output>
+      </div>
+      <p class="muted">新闻模式默认 95%。依次搜索开放许可图库和新闻网页图片；没有合适结果时才回退到 MiniMax。新闻网页图片会保留来源链接，版权状态仍需发布前人工确认。</p>
+
+      <label for="style">图片生成补充 Prompt（可编辑）</label>
+      <textarea id="style" name="style"
+                placeholder="例如：人物姿态更夸张一些；优先使用房屋、书本、盾牌、台阶等一眼可懂的图标。"></textarea>
+      <p class="muted">它会追加到每一幕图片 Prompt；全局范式仍在 prompts/video/styles 中统一维护。</p>
+
+      <details>
+        <summary>时长、语速与画面参数</summary>
+        <div class="form-columns">
+          <div>
+            <label for="target_duration">目标时长</label>
+            <select id="target_duration">
+              <option value="60">约 60 秒</option>
+              <option value="80" selected>约 80 秒</option>
+              <option value="90">约 90 秒</option>
+              <option value="120">约 2 分钟</option>
+            </select>
+            <label for="scene_duration">换图间隔</label>
+            <select id="scene_duration">
+              <option value="3">约 3 秒</option>
+              <option value="3.5" selected>约 3.5 秒</option>
+              <option value="4">约 4 秒</option>
+            </select>
+            <label for="resolution">分辨率</label>
+            <select id="resolution">
+              <option value="720p" selected>720p（生成更快）</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </div>
+          <div>
+            <label for="speech_speed">语速</label>
+            <select id="speech_speed">
+              <option value="1">1.0×</option>
+              <option value="1.1">1.1×</option>
+              <option value="1.2" selected>1.2×（推荐）</option>
+              <option value="1.3">1.3×</option>
+              <option value="1.4">1.4×</option>
+            </select>
+            <label for="scene_gap">句间停顿</label>
+            <select id="scene_gap">
+              <option value="80">80ms</option>
+              <option value="120" selected>120ms（自然紧凑）</option>
+              <option value="180">180ms</option>
+              <option value="260">260ms</option>
+            </select>
+            <label><input id="subtitles" type="checkbox" checked style="width:auto;margin-right:7px">烧录字幕</label>
+            <label><input id="trim_speech" type="checkbox" checked style="width:auto;margin-right:7px">裁掉句首句尾空白</label>
+            <label><input id="bookends" type="checkbox" checked style="width:auto;margin-right:7px">加入动态片头片尾</label>
+          </div>
+        </div>
+      </details>
+
+      <p>
+        <button id="create_video" type="submit">开始生成视频</button>
+        <button id="cancel_edit" type="button" class="secondary" hidden>取消编辑</button>
+      </p>
+      <p class="muted">任务会交给后台 worker；离开页面不会中断生成。</p>
+    </form>
+  </section>
+
+  <section class="card" id="current_project_card">
+    <div class="status-head">
+      <h2 style="margin:0">当前任务</h2>
+      <span class="status-pill" id="project_status">尚未创建</span>
+    </div>
+    <h3 id="project_title">新建任务后可在这里查看进度</h3>
+    <p class="muted" id="project_meta"></p>
+    <div class="progress-track" aria-label="生成进度"><div class="progress-bar" id="project_progress"></div></div>
+    <p id="project_step" class="muted">等待开始</p>
+    <p id="project_error" class="notice error" hidden></p>
+    <video id="video_preview" class="video-preview" controls hidden></video>
+    <div class="actions" id="project_actions"></div>
+    <details id="transcript_details" hidden>
+      <summary>查看口语稿和逐幕图片 Prompt</summary>
+      <ol id="transcript_list"></ol>
+    </details>
+    <details id="research_details" hidden>
+      <summary>查看新闻 Fact Sheet、来源和审核报告</summary>
+      <div id="research_report"></div>
+    </details>
+  </section>
+</div>
+
+<section class="card" style="margin-top:20px">
+  <div class="status-head">
+    <h2>最近视频任务</h2>
+    <button type="button" class="secondary" id="refresh_projects">刷新</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>标题 / 来源</th><th>人声</th><th>进度</th><th>时长</th><th>创建时间</th><th>操作</th></tr></thead>
+      <tbody id="project_rows"><tr><td colspan="6" class="muted">正在加载…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const form = document.getElementById('video-create-form');
+  const sourceValue = document.getElementById('video_source_value');
+  const sourceLabel = document.getElementById('video_source_label');
+  const createButton = document.getElementById('create_video');
+  const rows = document.getElementById('project_rows');
+  const statusNames = {
+    pending: '排队中', extracting_source: '提取材料', generating_script: '生成口语稿',
+    researching_news: '多来源研究', reviewing_news: '事实审核',
+    generating_assets: '生成图片和配音', composing: '合成视频', completed: '已完成',
+    failed: '失败', cancelled: '已取消', needs_review: '等待安全审核', running: '处理中'
+  };
+  const stepNames = {
+    queued: '已进入后台队列', extract_source: '正在读取并整理输入材料',
+    research_news: '正在扩展检索、抓取来源并建立 Fact Sheet',
+    review_news: '正在逐幕核对事实、传闻和来源覆盖',
+    generate_script: '正在生成口语稿和分镜', generate_assets: '正在生成逐幕图片与配音',
+    compose_video: '正在合成字幕、音频和画面', completed: '成片已经生成',
+    cancelled: '任务已取消', safety_review: '口语稿需要人工确认'
+  };
+  let selectedProjectId = null;
+  let editingProjectId = null;
+  let refreshTimer = null;
+
+  function selectedSourceType() {
+    return form.querySelector('input[name="video_source_type"]:checked').value;
+  }
+
+  function syncSourceMode() {
+    const mode = selectedSourceType();
+    const config = {
+      topic: ['视频主题', '例如：为什么总在替别人操心？用阿德勒的课题分离解释', '90px'],
+      text: ['粘贴原稿或参考文本', '粘贴需要改写成口语稿的完整文本…', '220px'],
+      url: ['文章链接', 'https://example.com/article', '90px']
+    }[mode];
+    sourceLabel.textContent = config[0];
+    sourceValue.placeholder = config[1];
+    sourceValue.style.minHeight = config[2];
+  }
+
+  function sourcePayload() {
+    const type = selectedSourceType();
+    const value = sourceValue.value.trim();
+    if (type === 'topic') return {type, topic: value};
+    if (type === 'text') return {type, text: value};
+    return {type, url: value};
+  }
+
+  function requestPayload() {
+    return {
+      source: sourcePayload(),
+      workflow: document.getElementById('workflow').value,
+      news_review_enabled: document.getElementById('news_review_enabled').checked,
+      news_angle: document.getElementById('news_angle').value,
+      news_model_routes: {
+        mechanical: document.getElementById('news_mechanical').value,
+        judgment: document.getElementById('news_judgment').value,
+        research: document.getElementById('news_research').value,
+        writer: document.getElementById('news_writer').value,
+        review: document.getElementById('news_review').value
+      },
+      target_duration_seconds: Number(document.getElementById('target_duration').value),
+      resolution: document.getElementById('resolution').value,
+      fps: 30,
+      voice: document.getElementById('voice').value,
+      provider: document.getElementById('provider').value,
+      subtitles: document.getElementById('subtitles').checked,
+      bookends: document.getElementById('bookends').checked,
+      use_web_images: document.getElementById('use_web_images').checked,
+      web_image_ratio: Number(document.getElementById('web_image_ratio').value) / 100,
+      visual_profile: document.getElementById('visual_profile').value,
+      script_prompt: document.getElementById('script_prompt').value.trim(),
+      style: document.getElementById('style').value.trim(),
+      scene_duration_seconds: Number(document.getElementById('scene_duration').value),
+      speech_speed: Number(document.getElementById('speech_speed').value),
+      scene_gap_ms: Number(document.getElementById('scene_gap').value),
+      trim_speech_silence: document.getElementById('trim_speech').checked
+    };
+  }
+
+  async function api(url, options = {}) {
+    const response = await fetch(url, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = Array.isArray(body.detail)
+        ? body.detail.map(item => item.msg).join('；')
+        : (body.detail || `请求失败（${response.status}）`);
+      throw new Error(detail);
+    }
+    return body;
+  }
+
+  function formatDuration(ms) {
+    if (!ms) return '—';
+    return `${(ms / 1000).toFixed(1)} 秒`;
+  }
+
+  function formatDate(value) {
+    return value ? new Date(value).toLocaleString('zh-CN', {hour12:false}) : '—';
+  }
+
+  function addAction(container, text, action, id, className = 'secondary') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = text;
+    button.dataset.action = action;
+    button.dataset.id = id;
+    container.appendChild(button);
+  }
+
+  function setSelectValue(id, value) {
+    const select = document.getElementById(id);
+    if (!value) return;
+    if (![...select.options].some(option => option.value === String(value))) {
+      const option = document.createElement('option');
+      option.value = String(value);
+      option.textContent = String(value);
+      select.appendChild(option);
+    }
+    select.value = String(value);
+  }
+
+  function populateFailedProjectForEdit(project) {
+    editingProjectId = project.id;
+    const sourceInput = form.querySelector(`input[name="video_source_type"][value="${project.source_type}"]`);
+    if (sourceInput) sourceInput.checked = true;
+    syncSourceMode();
+    sourceValue.value = project.source_type === 'url'
+      ? (project.source_url || '')
+      : project.source_type === 'text'
+        ? (project.source_text || '')
+        : (project.source_topic || '');
+    setSelectValue('workflow', project.workflow);
+    document.getElementById('workflow').dispatchEvent(new Event('change'));
+    setSelectValue('news_angle', project.news_angle);
+    const routes = project.news_model_routes || {};
+    setSelectValue('news_mechanical', routes.mechanical);
+    setSelectValue('news_judgment', routes.judgment);
+    setSelectValue('news_research', routes.research);
+    setSelectValue('news_writer', routes.writer);
+    setSelectValue('news_review', routes.review);
+    document.getElementById('news_review_enabled').checked = Boolean(project.news_review_enabled);
+    document.getElementById('news_review_enabled').dispatchEvent(new Event('change'));
+    setSelectValue('provider', project.workflow === 'news_research' ? routes.writer : project.llm_provider);
+    setSelectValue('voice', project.voice);
+    setSelectValue('target_duration', project.target_duration_seconds);
+    setSelectValue('resolution', project.resolution);
+    setSelectValue('scene_duration', project.scene_duration_seconds);
+    setSelectValue('speech_speed', project.speech_speed);
+    setSelectValue('scene_gap', project.scene_gap_ms);
+    document.getElementById('script_prompt').value = project.script_prompt || '';
+    document.getElementById('style').value = project.style || '';
+    document.getElementById('visual_profile').value = project.visual_profile;
+    document.getElementById('visual_profile').dispatchEvent(new Event('change'));
+    document.getElementById('subtitles').checked = project.subtitles_enabled;
+    document.getElementById('bookends').checked = project.bookends;
+    document.getElementById('use_web_images').checked = project.use_web_images;
+    document.getElementById('web_image_ratio').value = Math.round((project.web_image_ratio || 0.95) * 100);
+    document.getElementById('web_image_ratio').dispatchEvent(new Event('input'));
+    document.getElementById('trim_speech').checked = project.trim_speech_silence;
+    createButton.textContent = `保存并重新生成任务 #${project.id}`;
+    document.getElementById('cancel_edit').hidden = false;
+    form.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  function cancelEditing() {
+    editingProjectId = null;
+    createButton.textContent = '开始生成视频';
+    document.getElementById('cancel_edit').hidden = true;
+  }
+
+  function renderCurrent(project) {
+    selectedProjectId = project.id;
+    document.getElementById('project_status').textContent = statusNames[project.status] || project.status;
+    document.getElementById('project_title').textContent = project.title || project.source_title || project.source_topic || `视频任务 #${project.id}`;
+    const imageMode = project.use_web_images
+      ? `网络真实图片目标 ${Math.round((project.web_image_ratio || 0.95) * 100)}%${project.actual_web_image_ratio == null ? '' : ` / 实际 ${Math.round(project.actual_web_image_ratio * 100)}%`}`
+      : 'AI 生成图';
+    const workflowName = project.workflow === 'news_research' ? '新闻研究' : '普通讲解';
+    document.getElementById('project_meta').textContent = `#${project.id} · ${workflowName} · ${project.voice} · ${imageMode} · ${project.width}×${project.height} · 目标 ${project.target_duration_seconds} 秒`;
+    document.getElementById('project_progress').style.width = `${project.progress}%`;
+    document.getElementById('project_step').textContent = `${project.progress}% · ${stepNames[project.current_step] || project.current_step}`;
+    const error = document.getElementById('project_error');
+    error.hidden = !project.error_message;
+    error.textContent = project.error_message ? `任务信息：${project.error_message}` : '';
+    const video = document.getElementById('video_preview');
+    video.hidden = !project.output_url;
+    if (project.output_url && video.getAttribute('src') !== project.output_url) {
+      video.src = project.output_url;
+      video.load();
+    }
+    const actions = document.getElementById('project_actions');
+    actions.replaceChildren();
+    if (project.output_url) {
+      const download = document.createElement('a');
+      download.className = 'button';
+      download.href = project.output_url;
+      download.textContent = '下载 MP4';
+      actions.appendChild(download);
+    }
+    if (project.subtitle_url) {
+      const subtitle = document.createElement('a');
+      subtitle.className = 'button secondary';
+      subtitle.href = project.subtitle_url;
+      subtitle.textContent = '下载字幕';
+      actions.appendChild(subtitle);
+    }
+    if (['pending','extracting_source','researching_news','generating_script','reviewing_news','generating_assets','composing','running'].includes(project.status)) {
+      addAction(actions, '取消任务', 'cancel', project.id, 'warn');
+    } else if (project.status === 'failed' || project.status === 'cancelled') {
+      addAction(actions, '编辑后重生成', 'edit', project.id);
+      addAction(actions, '重新生成', 'retry', project.id);
+      addAction(actions, '删除任务', 'delete', project.id, 'warn');
+    } else if (project.status === 'needs_review') {
+      addAction(actions, '确认并继续', 'approve', project.id);
+    }
+    const details = document.getElementById('transcript_details');
+    const list = document.getElementById('transcript_list');
+    details.hidden = !project.scenes.length;
+    list.replaceChildren();
+    project.scenes.forEach(scene => {
+      const item = document.createElement('li');
+      const narration = document.createElement('p');
+      narration.textContent = scene.narration;
+      const prompt = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = '查看图片 Prompt';
+      const body = document.createElement('p');
+      body.className = 'muted';
+      body.textContent = scene.image_prompt;
+      prompt.append(summary, body);
+      item.append(narration, prompt);
+      if (scene.image_source_page_url) {
+        const source = document.createElement('p');
+        source.className = 'muted';
+        const sourceLink = document.createElement('a');
+        sourceLink.href = scene.image_source_page_url;
+        sourceLink.target = '_blank';
+        sourceLink.rel = 'noopener noreferrer';
+        sourceLink.textContent = '查看图片来源';
+        source.append('网络图片 · ', sourceLink);
+        if (scene.image_source_author) source.append(` · ${scene.image_source_author}`);
+        if (scene.image_license_name) source.append(` · ${scene.image_license_name}`);
+        item.appendChild(source);
+      }
+      list.appendChild(item);
+    });
+    renderResearch(project);
+  }
+
+  function appendList(section, title, items, formatter) {
+    if (!items || !items.length) return;
+    const heading = document.createElement('h4');
+    heading.textContent = title;
+    const list = document.createElement('ol');
+    list.className = 'research-list';
+    items.forEach(item => {
+      const row = document.createElement('li');
+      formatter(row, item);
+      list.appendChild(row);
+    });
+    section.append(heading, list);
+  }
+
+  function renderResearch(project) {
+    const details = document.getElementById('research_details');
+    const report = document.getElementById('research_report');
+    report.replaceChildren();
+    const research = project.research || {};
+    const review = project.review || {};
+    details.hidden = project.workflow !== 'news_research' || (!Object.keys(research).length && !Object.keys(review).length);
+    if (details.hidden) return;
+    const assessment = research.judgment || {};
+    const reviewStatus = review.verdict === 'skipped'
+      ? '已关闭（仅本地编号校验）'
+      : (review.verdict || '尚未完成');
+    const summary = document.createElement('p');
+    summary.className = 'muted';
+    summary.textContent = `Story Score：${assessment.story_score ?? '—'} · 研究置信度：${assessment.confidence || '—'} · 审核：${reviewStatus}`;
+    report.appendChild(summary);
+    appendList(report, '检索来源', research.sources || [], (row, source) => {
+      const link = document.createElement('a');
+      link.href = source.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = `[${source.source_id} / ${source.tier}级] ${source.title || source.domain}`;
+      row.appendChild(link);
+    });
+    appendList(report, 'Fact Sheet', (research.fact_sheet || {}).claims || [], (row, claim) => {
+      row.textContent = `[${claim.claim_id} · ${claim.level}] ${claim.statement}`;
+    });
+    const issues = [
+      ...(review.unsupported_claims || []),
+      ...(review.rumor_flags || []),
+      ...(review.risk_flags || []),
+      ...(review.local_claim_id_errors || [])
+    ];
+    appendList(report, '审核问题', issues, (row, issue) => {
+      row.textContent = typeof issue === 'string' ? issue : JSON.stringify(issue);
+    });
+  }
+
+  function renderRows(projects) {
+    rows.replaceChildren();
+    if (!projects.length) {
+      const row = rows.insertRow();
+      const cell = row.insertCell();
+      cell.colSpan = 6;
+      cell.className = 'muted';
+      cell.textContent = '还没有视频任务';
+      return;
+    }
+    projects.forEach(project => {
+      const row = rows.insertRow();
+      const title = row.insertCell();
+      title.className = 'project-title';
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'secondary';
+      link.dataset.action = 'select';
+      link.dataset.id = project.id;
+      link.textContent = project.title || project.source_title || project.source_topic || `任务 #${project.id}`;
+      title.appendChild(link);
+      row.insertCell().textContent = project.voice;
+      row.insertCell().textContent = `${statusNames[project.status] || project.status} · ${project.progress}%`;
+      row.insertCell().textContent = formatDuration(project.actual_duration_ms);
+      row.insertCell().textContent = formatDate(project.created_at);
+      const action = row.insertCell();
+      if (project.output_url) {
+        const download = document.createElement('a');
+        download.href = project.output_url;
+        download.textContent = '下载';
+        action.appendChild(download);
+      } else {
+        action.textContent = '—';
+      }
+    });
+  }
+
+  async function loadProjects(selectNewest = false) {
+    const projects = await api('/api/video-projects?limit=30');
+    renderRows(projects);
+    if (projects.length && (selectNewest || selectedProjectId === null)) {
+      selectedProjectId = projects[0].id;
+    }
+    if (selectedProjectId !== null) {
+      const selected = projects.find(item => item.id === selectedProjectId);
+      if (selected) renderCurrent(selected);
+    }
+    return projects;
+  }
+
+  async function projectAction(action, id) {
+    if (action === 'delete') {
+      await api(`/api/video-projects/${id}`, {method:'DELETE'});
+      if (selectedProjectId === Number(id)) selectedProjectId = null;
+      await loadProjects(true);
+      return;
+    }
+    await api(`/api/video-projects/${id}/${action}`, {method:'POST'});
+    selectedProjectId = Number(id);
+    await loadProjects();
+  }
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    createButton.disabled = true;
+    createButton.textContent = '正在提交…';
+    try {
+      const project = await api(editingProjectId ? `/api/video-projects/${editingProjectId}` : '/api/video-projects', {
+        method: editingProjectId ? 'PUT' : 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(requestPayload())
+      });
+      selectedProjectId = project.id;
+      cancelEditing();
+      renderCurrent(project);
+      await loadProjects();
+      document.getElementById('current_project_card').scrollIntoView({behavior:'smooth', block:'start'});
+    } catch (error) {
+      const message = document.getElementById('project_error');
+      message.hidden = false;
+      message.textContent = `创建失败：${error.message}`;
+    } finally {
+      createButton.disabled = false;
+      createButton.textContent = editingProjectId
+        ? `保存并重新生成任务 #${editingProjectId}`
+        : '开始生成视频';
+    }
+  });
+
+  document.addEventListener('click', async event => {
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+    const {action, id} = target.dataset;
+    try {
+      if (action === 'select') {
+        selectedProjectId = Number(id);
+        const project = await api(`/api/video-projects/${id}`);
+        renderCurrent(project);
+        document.getElementById('current_project_card').scrollIntoView({behavior:'smooth', block:'start'});
+      } else if (action === 'edit') {
+        const project = await api(`/api/video-projects/${id}`);
+        populateFailedProjectForEdit(project);
+      } else if (action === 'delete') {
+        if (window.confirm(`确定永久删除失败任务 #${id} 及其生成文件吗？`)) {
+          await projectAction(action, id);
+        }
+      } else {
+        await projectAction(action, id);
+      }
+    } catch (error) {
+      const message = document.getElementById('project_error');
+      message.hidden = false;
+      message.textContent = `操作失败：${error.message}`;
+    }
+  });
+
+  document.querySelectorAll('input[name="video_source_type"]').forEach(item => item.addEventListener('change', syncSourceMode));
+  document.querySelectorAll('.news-model').forEach(select => {
+    document.querySelectorAll('#provider option').forEach(sourceOption => {
+      const option = sourceOption.cloneNode(true);
+      option.selected = option.value === select.dataset.default;
+      select.appendChild(option);
+    });
+  });
+  document.getElementById('workflow').addEventListener('change', event => {
+    const newsMode = event.target.value === 'news_research';
+    document.getElementById('news_options').hidden = !newsMode;
+    document.getElementById('workflow_help').textContent = newsMode
+      ? '先检索并核验多个来源，建立 Fact Sheet；独立 LLM 事实审核可按需开启。'
+      : '直接依据给定材料生成口语稿。';
+    if (newsMode) {
+      document.getElementById('use_web_images').checked = true;
+      document.getElementById('web_image_ratio').value = 95;
+      document.getElementById('web_image_ratio').dispatchEvent(new Event('input'));
+      const profile = document.getElementById('visual_profile');
+      if ([...profile.options].some(option => option.value === 'news_documentary')) profile.value = 'news_documentary';
+      profile.dispatchEvent(new Event('change'));
+    }
+  });
+  document.getElementById('news_review_enabled').addEventListener('change', event => {
+    document.getElementById('news_review').disabled = !event.target.checked;
+  });
+  document.getElementById('web_image_ratio').addEventListener('input', event => {
+    document.getElementById('web_image_ratio_value').textContent = `${event.target.value}%`;
+  });
+  document.getElementById('visual_profile').addEventListener('change', event => {
+    document.getElementById('base_prompt_preview').textContent = event.target.selectedOptions[0]?.dataset.basePrompt || '';
+  });
+  document.getElementById('refresh_projects').addEventListener('click', () => loadProjects());
+  document.getElementById('cancel_edit').addEventListener('click', cancelEditing);
+  syncSourceMode();
+  document.getElementById('visual_profile').dispatchEvent(new Event('change'));
+  document.getElementById('workflow').dispatchEvent(new Event('change'));
+  document.getElementById('news_review_enabled').dispatchEvent(new Event('change'));
+  loadProjects(true).catch(error => {
+    rows.innerHTML = `<tr><td colspan="6" class="muted"></td></tr>`;
+    rows.querySelector('td').textContent = `加载失败：${error.message}`;
+  });
+  refreshTimer = window.setInterval(() => loadProjects().catch(() => {}), 3000);
+  window.addEventListener('beforeunload', () => window.clearInterval(refreshTimer));
+})();
+</script>
+{% endblock %}

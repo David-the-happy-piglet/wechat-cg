@@ -1,33 +1,64 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>内容控制台</h1>
+<h1>养生文章工作台</h1>
+<p class="muted">{{ default_content_workflow.description }}</p>
 {% if audience_created %}
 <p style="padding:10px 12px;background:#edf7ef;color:#25613f;border-radius:8px">
   已添加目标受众：{{ audience_created }}
 </p>
 {% endif %}
+{% if generation_error %}
+<p class="notice error">生成失败：{{ generation_error }}</p>
+{% endif %}
 <div class="grid">
   <section class="card">
-    <h2>生成文章</h2>
+    <h2>生成养生文章</h2>
     <form method="post" action="/admin/generate">
-      <label for="topic">文章主题</label>
-      <input id="topic" name="topic" required placeholder="例如：人到中年如何改善睡眠">
+      <input id="content_type" name="content_type" type="hidden" value="health_article">
+      <input id="story_mode" name="story_mode" type="hidden" value="auto">
+      <label for="article_source_type">内容来源</label>
+      <select id="article_source_type" name="source_type">
+        <option value="topic">给定主题</option>
+        <option value="text">给定文本 / 原稿</option>
+        <option value="url">文章链接</option>
+      </select>
+      <label for="article_source_value" id="article_source_label">文章主题</label>
+      <textarea id="article_source_value" name="source_value" required
+                placeholder="例如：人到中年如何改善睡眠"
+                style="min-height:84px"></textarea>
+      <div id="article_source_prompt_group" hidden>
+        <label for="article_source_prompt">改写补充 Prompt（可选）</label>
+        <textarea id="article_source_prompt" name="source_prompt"
+                  placeholder="例如：保留原文观点，但换成更生活化的例子；不要沿用原文结构。"
+                  style="min-height:82px"></textarea>
+        <p id="source_prompt_help" class="muted">原材料只作为观点和事实依据，系统会重新组织结构与表达。</p>
+      </div>
       <label for="category">内容分类</label>
-      <input id="category" name="category" value="日常养生">
+      <input id="category" name="category" value="{{ default_content_workflow.default_category }}">
       <label for="audience_slug">目标受众</label>
       <select id="audience_slug" name="audience_slug">
         {% for audience in audiences %}
           {% if audience.enabled %}
-          <option value="{{ audience.slug }}">{{ audience.name }}（{{ audience.age_range }}岁）</option>
+          <option value="{{ audience.slug }}"
+                  {% if audience.slug == default_content_workflow.default_audience_slug %}selected{% endif %}>
+            {{ audience.name }}（{{ audience.age_range }}岁）
+          </option>
           {% endif %}
         {% endfor %}
       </select>
       <label for="provider">文字模型</label>
       <select id="provider" name="provider">
+        <optgroup label="OpenAI">
+          <option value="openai">GPT-5.6 Sol（旗舰质量）</option>
+          <option value="openai-terra">GPT-5.6 Terra（均衡）</option>
+          <option value="openai-luna" selected>GPT-5.6 Luna（快速经济）</option>
+        </optgroup>
+        <optgroup label="其他模型">
         <option value="deepseek">DeepSeek（deepseek-v4-pro）</option>
-        <option value="minimax">MiniMax（MiniMax-M2.7）</option>
+        <option value="minimax">MiniMax（MiniMax-M3）</option>
         <option value="kimi">Kimi（kimi-k3）</option>
         <option value="mock">本地 Mock（无需 API Key）</option>
+        </optgroup>
       </select>
       <label for="target_length">文章篇幅</label>
       <select id="target_length" name="target_length">
@@ -45,15 +76,15 @@
         <option value="4" selected>4 — 强吸引（推荐）</option>
         <option value="5">5 — 最大化点击欲望</option>
       </select>
-      <p class="muted">
+      <p id="headline_help" class="muted">
         等级越高，越强调数字、反差、悬念和人群代入；始终禁止虚假健康承诺。
       </p>
-      <label>
+      <label id="humanize_label">
         <input type="checkbox" name="humanize" value="true" checked
                style="width:auto;margin-right:8px">
-        使用 Humanizer-zh 二次润色
+        <span id="humanize_text">使用 Humanizer-zh 二次润色</span>
       </label>
-      <p class="muted">
+      <p id="humanize_help" class="muted">
         减少机械排比、AI 高频词和模板化结尾；会增加一次文字模型调用。
       </p>
       <label>
@@ -148,6 +179,9 @@
           <tr>
             <td><strong>{{ plan.name }}</strong></td>
             <td title="{{ plan.directions }}">
+              <span class="tag">
+                {{ workflow_by_type[plan.content_type].short_name }}
+              </span><br>
               {{ plan.directions[:45] }}{% if plan.directions|length > 45 %}…{% endif %}
             </td>
             <td>{{ plan.audience.name }}</td>
@@ -198,11 +232,14 @@
     <details id="plan-{{ plan.id }}">
       <summary>编辑：{{ plan.name }}</summary>
     <form method="post" action="/admin/automation-plans/{{ plan.id }}"
+          class="automation-plan-form"
           style="padding-bottom:16px">
       <div class="grid">
         <div>
           <label>计划名称</label>
           <input name="name" value="{{ plan.name }}" required>
+          <input name="content_type" type="hidden" value="health_article">
+          <input name="story_mode" type="hidden" value="auto">
           <label>内容大方向</label>
           <textarea name="directions" required
                     placeholder="例如：睡眠、日常饮食、适度运动；强调普通家庭可执行，不写疾病治疗。">{{ plan.directions }}</textarea>
@@ -224,6 +261,9 @@
           <label>文字模型</label>
           <select name="provider">
             {% for value, label in [
+              ("openai", "OpenAI · GPT-5.6 Sol"),
+              ("openai-terra", "OpenAI · GPT-5.6 Terra"),
+              ("openai-luna", "OpenAI · GPT-5.6 Luna"),
               ("deepseek", "DeepSeek"),
               ("minimax", "MiniMax"),
               ("kimi", "Kimi"),
@@ -296,16 +336,18 @@
 
   <details id="new-automation-plan" {% if not automation_plans %}open{% endif %}>
     <summary>新增定时任务</summary>
-    <form method="post" action="/admin/automation-plans">
+    <form method="post" action="/admin/automation-plans" class="automation-plan-form">
       <div class="grid">
         <div>
           <label>计划名称</label>
           <input name="name" value="每日内容计划" required>
+          <input name="content_type" type="hidden" value="health_article">
+          <input name="story_mode" type="hidden" value="auto">
           <label>内容大方向</label>
           <textarea name="directions" required
                     placeholder="例如：睡眠、日常饮食、适度运动；强调普通家庭可执行，不写疾病治疗。"></textarea>
           <label>默认分类</label>
-          <input name="category" value="日常养生" required>
+          <input name="category" value="{{ default_content_workflow.default_category }}" required>
         </div>
         <div>
           <label>目标受众</label>
@@ -318,6 +360,9 @@
           </select>
           <label>文字模型</label>
           <select name="provider">
+            <option value="openai">OpenAI · GPT-5.6 Sol</option>
+            <option value="openai-terra">OpenAI · GPT-5.6 Terra</option>
+            <option value="openai-luna" selected>OpenAI · GPT-5.6 Luna</option>
             <option value="deepseek">DeepSeek</option>
             <option value="minimax">MiniMax</option>
             <option value="kimi">Kimi</option>
@@ -385,6 +430,7 @@
         <td>
           {% if run.article_id %}
           <a href="/admin/articles/{{ run.article_id }}">查看</a>
+          {% include "retry_images.html" %}
           {% else %}—{% endif %}
         </td>
       </tr>
@@ -395,42 +441,148 @@
   </table>
 </section>
 
-<section class="card" style="margin-top:20px">
-  <h2>最近文章</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>标题</th><th>模型</th><th>受众</th><th>状态</th><th>创建时间</th><th>草稿箱操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for article in articles %}
-      <tr>
-        <td><a href="/admin/articles/{{ article.id }}">{{ article.selected_title }}</a></td>
-        <td>{{ article.llm_provider }} / {{ article.model_name }}</td>
-        <td>{{ article.audience.name }}</td>
-        <td>{{ article.status }}</td>
-        <td>{{ article.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-        <td>
-          {% if article.status == "needs_review" %}
-          <button type="button" disabled
-                  style="background:#9aa59e;cursor:not-allowed;padding:7px 10px">
-            需先审核
-          </button>
-          {% else %}
-          <form method="post" action="/admin/articles/{{ article.id }}/wechat-draft"
-                style="margin:0">
-            <button type="submit" style="padding:7px 10px;white-space:nowrap">
-              {% if article.wechat_media_id %}重新核验{% else %}推送草稿箱{% endif %}
-            </button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="6" class="muted">还没有文章</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<section id="recent-articles" class="card" style="margin-top:20px">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <h2>最近文章</h2>
+    <span class="muted">共 {{ article_total }} 篇</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>标题</th><th>类型 / 分类</th><th>模型</th><th>受众</th><th>状态</th><th>创建时间</th><th>草稿箱操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for article in articles %}
+        <tr>
+          <td><a href="/admin/articles/{{ article.id }}">{{ article.selected_title }}</a></td>
+          <td>
+            {{ workflow_by_type[article.content_type].short_name }}
+            <br><span class="muted">{{ article.category }}</span>
+          </td>
+          <td>{{ article.llm_provider }} / {{ article.model_name }}</td>
+          <td>{{ article.audience.name }}</td>
+          <td>{{ article.status }}</td>
+          <td>{{ article.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>
+            <form method="post" action="/admin/articles/{{ article.id }}/wechat-draft"
+                  style="margin:0">
+              <button type="submit" style="padding:7px 10px;white-space:nowrap">
+                {% if article.wechat_media_id %}重新核验{% else %}推送草稿箱{% endif %}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="muted">还没有文章</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if article_page_count > 1 %}
+  <nav aria-label="文章分页"
+       style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:18px">
+    {% if article_page > 1 %}
+    <a class="button" href="/admin?content_type={{ default_content_workflow.content_type }}&article_page={{ article_page - 1 }}#recent-articles">上一页</a>
+    {% else %}
+    <span class="button" style="opacity:.45;cursor:not-allowed">上一页</span>
+    {% endif %}
+    <span class="muted">第 {{ article_page }} / {{ article_page_count }} 页</span>
+    {% if article_page < article_page_count %}
+    <a class="button" href="/admin?content_type={{ default_content_workflow.content_type }}&article_page={{ article_page + 1 }}#recent-articles">下一页</a>
+    {% else %}
+    <span class="button" style="opacity:.45;cursor:not-allowed">下一页</span>
+    {% endif %}
+  </nav>
+  {% endif %}
 </section>
+<script>
+(() => {
+  const workflowList = {{ content_workflows | tojson }};
+  const workflows = Object.fromEntries(
+    workflowList.map((workflow) => [workflow.content_type, workflow])
+  );
+  const contentType = document.getElementById('content_type');
+  const storyModeGroup = document.getElementById('story_mode_group');
+  const sourceType = document.getElementById('article_source_type');
+  const value = document.getElementById('article_source_value');
+  const label = document.getElementById('article_source_label');
+  const promptGroup = document.getElementById('article_source_prompt_group');
+  const sourceHelp = document.getElementById('source_prompt_help');
+  const category = document.getElementById('category');
+  const audience = document.getElementById('audience_slug');
+  const headlineHelp = document.getElementById('headline_help');
+  const humanizeText = document.getElementById('humanize_text');
+  const humanizeHelp = document.getElementById('humanize_help');
+  let previousContentType = contentType.value;
+  const rememberedAudiences = {[previousContentType]: audience.value};
+
+  function syncSourceMode() {
+    const workflow = workflows[contentType.value];
+    const modes = workflow.ui.source_modes;
+    const [labelText, placeholder] = modes[sourceType.value];
+    label.textContent = labelText;
+    value.placeholder = placeholder;
+    value.style.minHeight = sourceType.value === 'text' ? '190px' : '84px';
+    promptGroup.hidden = sourceType.value === 'topic';
+    sourceHelp.textContent = workflow.ui.source_help;
+  }
+
+  function syncContentType() {
+    const workflow = workflows[contentType.value];
+    const previousWorkflow = workflows[previousContentType];
+    if (storyModeGroup) {
+      storyModeGroup.hidden = !workflow.supports_story_modes;
+    }
+    if (workflow.content_type !== previousContentType) {
+      if (category.value === previousWorkflow.default_category) {
+        category.value = workflow.default_category;
+      }
+      rememberedAudiences[previousContentType] = audience.value;
+      const preferredAudience = rememberedAudiences[workflow.content_type]
+        || workflow.default_audience_slug;
+      if (audience.querySelector(`option[value="${preferredAudience}"]`)) {
+        audience.value = preferredAudience;
+      }
+    }
+    headlineHelp.textContent = workflow.ui.headline_help;
+    humanizeText.textContent = workflow.ui.humanize_label;
+    humanizeHelp.textContent = workflow.ui.humanize_help;
+    previousContentType = workflow.content_type;
+    syncSourceMode();
+  }
+  sourceType.addEventListener('change', syncSourceMode);
+  contentType.addEventListener('change', syncContentType);
+  syncContentType();
+
+  document.querySelectorAll('.automation-plan-form').forEach((form) => {
+    const planType = form.querySelector('[name="content_type"]');
+    const planMode = form.querySelector('[name="story_mode"]');
+    const planCategory = form.querySelector('[name="category"]');
+    const planAudience = form.querySelector('[name="audience_slug"]');
+    let previousPlanType = planType.value;
+    const planAudiences = {[previousPlanType]: planAudience.value};
+    function syncPlanType() {
+      const workflow = workflows[planType.value];
+      const previousWorkflow = workflows[previousPlanType];
+      planMode.disabled = !workflow.supports_story_modes;
+      if (workflow.content_type !== previousPlanType) {
+        if (planCategory.value === previousWorkflow.default_category) {
+          planCategory.value = workflow.default_category;
+        }
+        planAudiences[previousPlanType] = planAudience.value;
+        const preferredAudience = planAudiences[workflow.content_type]
+          || workflow.default_audience_slug;
+        if (planAudience.querySelector(`option[value="${preferredAudience}"]`)) {
+          planAudience.value = preferredAudience;
+        }
+      }
+      previousPlanType = workflow.content_type;
+    }
+    planType.addEventListener('change', syncPlanType);
+    syncPlanType();
+  });
+})();
+</script>
 {% endblock %}

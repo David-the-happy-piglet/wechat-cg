@@ -9,6 +9,7 @@ from .services.automation import (
     process_next_run,
     recover_stale_runs,
 )
+from .services.topic_reviews import process_next_manual_review, recover_stale_reviews
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,12 +33,19 @@ def scheduler_tick() -> None:
                 run.status,
                 run.article_id,
             )
+        while True:
+            review = process_next_manual_review(session, settings)
+            if review is None:
+                break
+            logger.info("manual topic review %s status=%s", review.id, review.status)
 
 
 def main() -> None:
-    Base.metadata.create_all(bind=engine)
+    if settings.auto_create_schema:
+        Base.metadata.create_all(bind=engine)
     with SessionLocal() as session:
         seed_audiences(session)
+        recover_stale_reviews(session, settings)
         recovered = recover_stale_runs(session, settings)
         if recovered:
             logger.warning("recovered %s stale automation runs", recovered)
