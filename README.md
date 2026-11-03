@@ -2,7 +2,7 @@
 
 面向微信公众号内容生产的 Python 模块化单体应用。把选题、结构化写作、中文润色、配图、HTML 排版、定时任务与微信草稿发布组织为可持久化、可恢复的工程链路。
 
-本分支：`wechat-cg`。独立短剧制作平台见 [AI-drama-studio 分支](https://github.com/Ctwqk/ContentGenerator/tree/AI-drama-studio)。
+独立仓库：`David-the-happy-piglet/wechat-cg`，默认分支为 `main`。独立短剧制作平台见 [AI-drama-studio 仓库](https://github.com/David-the-happy-piglet/AI-drama-studio)。
 
 ## 工程结构
 
@@ -55,13 +55,13 @@ Web、文章调度器和视频 worker 是独立进程，共享数据库和生成
 - **人工审阅**：微恐手动工作台支持外部 Claude 写作交接，正文审核通过后才可推送；微信正式发布仍由运营者确认。
 - **接口与运行检查**：Pydantic 契约、Alembic 迁移、`/livez`、`/readyz` 和独立测试覆盖主要边界。
 
-文章转解说视频与公众号服务共用模型和管理界面，因此保留在本分支；独立的 React 短剧平台在另一条分支维护。
+文章转解说视频与公众号服务共用模型和管理界面，因此保留在本分支；独立的 React 短剧平台在 AI-drama-studio 仓库维护。
 
 ## 快速运行
 
 ```bash
-git clone --branch wechat-cg https://github.com/Ctwqk/ContentGenerator.git
-cd ContentGenerator
+git clone https://github.com/David-the-happy-piglet/wechat-cg.git
+cd wechat-cg
 cp .env.example .env
 docker compose up --build
 ```
@@ -96,4 +96,4 @@ python -m ruff check app tests migrations
 
 ## 项目来源
 
-本分支延续 `Ctwqk/ContentGenerator` 的 Git 历史，公众号功能的迭代保留原有提交作者信息。分支拆分不改变仓库所有权。
+本项目从 `Ctwqk/ContentGenerator` 的 `wechat-cg` 分支拆分，保留原始 Git 历史与提交作者信息。后续在本仓库独立维护。
