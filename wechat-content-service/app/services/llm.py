@@ -465,6 +465,48 @@ def parse_json_response(content: str) -> dict[str, Any]:
         return parsed
 
 
+def _collect_stream(lines) -> dict[str, Any]:
+    """Join server-sent chat chunks into one chat-completion body."""
+    parts: list[str] = []
+    final_message = ""
+    finish_reason = None
+    usage = None
+    base_resp = None
+    for line in lines:
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            continue
+        chunk = json.loads(data)
+        if not isinstance(chunk, dict):
+            continue
+        usage = chunk.get("usage") or usage
+        if isinstance(chunk.get("base_resp"), dict):
+            base_resp = chunk["base_resp"]
+        for choice in chunk.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            finish_reason = choice.get("finish_reason") or finish_reason
+            delta = choice.get("delta")
+            if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                parts.append(delta["content"])
+            message = choice.get("message")
+            # Some providers repeat the whole answer in the closing chunk.
+            if isinstance(message, dict) and isinstance(message.get("content"), str):
+                final_message = message["content"]
+    content = "".join(parts) or final_message
+    body: dict[str, Any] = {
+        "choices": [{"message": {"content": content}, "finish_reason": finish_reason}] if content else None,
+    }
+    if usage:
+        body["usage"] = usage
+    if base_resp:
+        body["base_resp"] = base_resp
+    return body
+
+
 @dataclass(frozen=True)
 class ChatProviderConfig:
     name: str
@@ -479,6 +521,8 @@ class ChatProviderConfig:
     max_output_tokens: int = 4096
     endpoint_path: str = "/chat/completions"
     extra_payload: dict[str, Any] = field(default_factory=dict)
+    # Long answers can outlast a gateway's idle timeout; streaming keeps bytes flowing.
+    stream: bool = False
 
 
 class CompatibleChatProvider(LLMProvider):
@@ -503,6 +547,7 @@ class CompatibleChatProvider(LLMProvider):
         self.max_output_tokens = config.max_output_tokens
         self.endpoint_path = config.endpoint_path
         self.extra_payload = config.extra_payload
+        self.stream = config.stream
         self.max_attempts = max(1, max_attempts)
         self.retry_base_seconds = max(0, retry_base_seconds)
         self.usage = TokenUsage()
@@ -531,6 +576,45 @@ class CompatibleChatProvider(LLMProvider):
                 )
                 if delay:
                     time.sleep(delay)
+
+    def _post_stream(self, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+        """Send a streaming request and rebuild the body a non-streaming call would return."""
+        url = f"{self.api_base}{self.endpoint_path}"
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                with httpx.stream(
+                    "POST",
+                    url,
+                    json={**payload, "stream": True},
+                    headers=headers,
+                    timeout=self.timeout,
+                ) as response:
+                    if response.status_code >= 400:
+                        response.read()
+                        response.raise_for_status()
+                    if "text/event-stream" not in response.headers.get("content-type", ""):
+                        # Providers answer a rejected request with a plain JSON body.
+                        response.read()
+                        body = response.json()
+                        if not isinstance(body, dict):
+                            raise LLMError(f"{self.name} returned a non-object JSON response")
+                        return body
+                    return _collect_stream(response.iter_lines())
+            except httpx.TransportError as exc:
+                if attempt >= self.max_attempts:
+                    raise
+                delay = self.retry_base_seconds * (2 ** (attempt - 1))
+                logger.warning(
+                    "%s transport error on attempt %s/%s; retrying in %.1fs: %s",
+                    self.name,
+                    attempt,
+                    self.max_attempts,
+                    delay,
+                    exc,
+                )
+                if delay:
+                    time.sleep(delay)
+        raise LLMError(f"{self.name} request was not attempted")
 
     def generate_article(self, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         return self.generate_json(
@@ -567,18 +651,21 @@ class CompatibleChatProvider(LLMProvider):
             "Content-Type": "application/json",
         }
         try:
-            response = self._post(payload, headers)
-            response.raise_for_status()
-            try:
-                body = response.json()
-            except json.JSONDecodeError as exc:
-                content_type = response.headers.get("content-type", "unknown")
-                raise LLMError(
-                    f"{self.name} returned a non-JSON HTTP {response.status_code} response "
-                    f"(content_type={content_type}, body_bytes={len(response.content)})"
-                ) from exc
-            if not isinstance(body, dict):
-                raise LLMError(f"{self.name} returned a non-object JSON response")
+            if self.stream:
+                body = self._post_stream(payload, headers)
+            else:
+                response = self._post(payload, headers)
+                response.raise_for_status()
+                try:
+                    body = response.json()
+                except json.JSONDecodeError as exc:
+                    content_type = response.headers.get("content-type", "unknown")
+                    raise LLMError(
+                        f"{self.name} returned a non-JSON HTTP {response.status_code} response "
+                        f"(content_type={content_type}, body_bytes={len(response.content)})"
+                    ) from exc
+                if not isinstance(body, dict):
+                    raise LLMError(f"{self.name} returned a non-object JSON response")
             self.usage = parse_token_usage(body)
             base_response = body.get("base_resp")
             if isinstance(base_response, dict) and base_response.get("status_code") not in (
@@ -702,6 +789,7 @@ def _provider_config(settings: Settings, provider_name: str) -> ChatProviderConf
                 settings.minimax_model,
                 settings.minimax_reasoning_effort,
             ),
+            stream=True,
         ),
         "kimi": ChatProviderConfig(
             name="kimi",

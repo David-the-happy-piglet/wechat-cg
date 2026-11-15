@@ -448,28 +448,52 @@ def test_deepseek_uses_larger_output_budget():
     assert provider.max_output_tokens == 8192
 
 
+class FakeStream:
+    """Stands in for httpx.stream: a context manager yielding one response."""
+
+    def __init__(self, *, lines=(), body=None, status_code=200):
+        self.lines = list(lines)
+        self.body = body
+        self.status_code = status_code
+        self.headers = {"content-type": "application/json" if body is not None else "text/event-stream"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return b""
+
+    def json(self):
+        return self.body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://example.test")
+            raise httpx.HTTPStatusError("error", request=request, response=httpx.Response(self.status_code))
+
+    def iter_lines(self):
+        return iter(self.lines)
+
+
+def sse(*chunks):
+    return [f"data: {json.dumps(chunk, ensure_ascii=False)}" for chunk in chunks] + ["data: [DONE]"]
+
+
 def test_minimax_m3_uses_standard_endpoint_and_larger_output_budget(monkeypatch):
     captured = {}
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
+    def fake_stream(method, url, *, json, headers, timeout):
+        captured.update({"method": method, "url": url, "payload": json})
+        return FakeStream(lines=sse(
+            {"choices": [{"delta": {"content": '{"topic": '}}]},
+            {"choices": [{"delta": {"content": '"测试选题"}'}, "finish_reason": "stop"}],
+             "usage": {"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13}},
+        ))
 
-        def json(self):
-            return {
-                "choices": [
-                    {
-                        "finish_reason": "stop",
-                        "message": {"content": '{"topic": "测试选题"}'},
-                    }
-                ]
-            }
-
-    def fake_post(url, *, json, headers, timeout):
-        captured.update({"url": url, "payload": json})
-        return FakeResponse()
-
-    monkeypatch.setattr("app.services.llm.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.llm.httpx.stream", fake_stream)
     provider = build_llm_provider(
         Settings(
             minimax_api_key="test-key",
@@ -480,9 +504,23 @@ def test_minimax_m3_uses_standard_endpoint_and_larger_output_budget(monkeypatch)
     )
 
     assert provider.generate_json("prompt") == {"topic": "测试选题"}
+    assert captured["method"] == "POST"
     assert captured["url"] == "https://api.minimaxi.com/v1/text/chatcompletion_v2"
+    assert captured["payload"]["stream"] is True
     assert captured["payload"]["thinking"] == {"type": "disabled"}
     assert captured["payload"]["max_completion_tokens"] == 16384
+    assert provider.usage.total_tokens == 13
+
+
+def test_streamed_answer_can_arrive_whole_in_the_closing_chunk(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.llm.httpx.stream",
+        lambda *args, **kwargs: FakeStream(lines=[": keep-alive", "", *sse(
+            {"choices": [{"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}]},
+        )]),
+    )
+    provider = build_llm_provider(Settings(minimax_api_key="test-key", provider_max_attempts=1), "minimax")
+    assert provider.generate_json("prompt") == {"ok": True}
 
 
 @pytest.mark.parametrize(("model", "effort", "expected"), [
@@ -494,18 +532,11 @@ def test_minimax_m3_uses_standard_endpoint_and_larger_output_budget(monkeypatch)
 def test_minimax_reasoning_controls_follow_the_model(monkeypatch, model, effort, expected):
     captured = {}
 
-    class FakeResponse:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"choices": [{"finish_reason": "stop", "message": {"content": '{"topic": "测试"}'}}]}
-
-    def fake_post(url, *, json, headers, timeout):
+    def fake_stream(method, url, *, json, headers, timeout):
         captured.update(json)
-        return FakeResponse()
+        return FakeStream(lines=sse({"choices": [{"delta": {"content": '{"topic": "测试"}'}, "finish_reason": "stop"}]}))
 
-    monkeypatch.setattr("app.services.llm.httpx.post", fake_post)
+    monkeypatch.setattr("app.services.llm.httpx.stream", fake_stream)
     provider = build_llm_provider(
         Settings(minimax_api_key="test-key", minimax_model=model, minimax_reasoning_effort=effort,
                  provider_max_attempts=1),
@@ -516,30 +547,15 @@ def test_minimax_reasoning_controls_follow_the_model(monkeypatch, model, effort,
     assert controls == expected
 
 
-def test_minimax_text_reports_business_error_when_choices_are_null(monkeypatch):
-    class FakeResponse:
-        def __init__(self):
-            self.headers = {"content-type": "application/json"}
-            self.content = b"{}"
-            self.status_code = 200
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "choices": None,
-                "usage": {"total_tokens": 0},
-                "base_resp": {
-                    "status_code": 2056,
-                    "status_msg": "Token Plan usage limit reached",
-                },
-            }
-
-    monkeypatch.setattr(
-        "app.services.llm.httpx.post",
-        lambda *args, **kwargs: FakeResponse(),
-    )
+@pytest.mark.parametrize("rejection", ["json_body", "stream_chunk"])
+def test_minimax_text_reports_business_error_when_choices_are_null(monkeypatch, rejection):
+    refusal = {
+        "choices": None,
+        "usage": {"total_tokens": 0},
+        "base_resp": {"status_code": 2056, "status_msg": "Token Plan usage limit reached"},
+    }
+    response = FakeStream(body=refusal) if rejection == "json_body" else FakeStream(lines=sse(refusal))
+    monkeypatch.setattr("app.services.llm.httpx.stream", lambda *args, **kwargs: response)
     provider = build_llm_provider(
         Settings(minimax_api_key="test-key", provider_max_attempts=1),
         "minimax",
@@ -552,6 +568,15 @@ def test_minimax_text_reports_business_error_when_choices_are_null(monkeypatch):
         assert "Token Plan usage limit reached" in message
     else:
         raise AssertionError("Expected MiniMax business error")
+
+
+def test_minimax_http_errors_surface_as_llm_errors(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.llm.httpx.stream", lambda *args, **kwargs: FakeStream(status_code=502, lines=[]),
+    )
+    provider = build_llm_provider(Settings(minimax_api_key="test-key", provider_max_attempts=1), "minimax")
+    with pytest.raises(LLMError, match="minimax request failed"):
+        provider.generate_json("prompt")
 
 
 def test_llm_retries_transient_transport_errors(monkeypatch):
