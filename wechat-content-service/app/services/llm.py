@@ -620,6 +620,16 @@ class CompatibleChatProvider(LLMProvider):
             raise LLMError(f"{self.name} request failed: {exc}{detail}") from exc
 
 
+def _minimax_reasoning_payload(model: str, effort: str) -> dict[str, Any]:
+    name = model.lower()
+    if not name.startswith("minimax-m3"):
+        return {}
+    if "flash" in name:
+        # Flash models reason on every call and reject thinking=disabled; only the depth is adjustable.
+        return {"reasoning_effort": effort} if effort else {}
+    return {"thinking": {"type": "disabled"}}
+
+
 def _provider_config(settings: Settings, provider_name: str) -> ChatProviderConfig:
     configs = {
         "compatible": ChatProviderConfig(
@@ -688,10 +698,9 @@ def _provider_config(settings: Settings, provider_name: str) -> ChatProviderConf
                 if settings.minimax_model.lower().startswith("minimax-m3")
                 else "/chat/completions"
             ),
-            extra_payload=(
-                {"thinking": {"type": "disabled"}}
-                if settings.minimax_model.lower().startswith("minimax-m3")
-                else {}
+            extra_payload=_minimax_reasoning_payload(
+                settings.minimax_model,
+                settings.minimax_reasoning_effort,
             ),
         ),
         "kimi": ChatProviderConfig(

@@ -485,6 +485,37 @@ def test_minimax_m3_uses_standard_endpoint_and_larger_output_budget(monkeypatch)
     assert captured["payload"]["max_completion_tokens"] == 16384
 
 
+@pytest.mark.parametrize(("model", "effort", "expected"), [
+    ("MiniMax-M3", "max", {"thinking": {"type": "disabled"}}),
+    ("MiniMax-M3.1-Flash", "", {}),
+    ("MiniMax-M3.1-Flash", "xhigh", {"reasoning_effort": "xhigh"}),
+    ("MiniMax-M2.7", "high", {}),
+])
+def test_minimax_reasoning_controls_follow_the_model(monkeypatch, model, effort, expected):
+    captured = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"finish_reason": "stop", "message": {"content": '{"topic": "测试"}'}}]}
+
+    def fake_post(url, *, json, headers, timeout):
+        captured.update(json)
+        return FakeResponse()
+
+    monkeypatch.setattr("app.services.llm.httpx.post", fake_post)
+    provider = build_llm_provider(
+        Settings(minimax_api_key="test-key", minimax_model=model, minimax_reasoning_effort=effort,
+                 provider_max_attempts=1),
+        "minimax",
+    )
+    assert provider.generate_json("prompt") == {"topic": "测试"}
+    controls = {key: captured[key] for key in ("thinking", "reasoning_effort") if key in captured}
+    assert controls == expected
+
+
 def test_minimax_text_reports_business_error_when_choices_are_null(monkeypatch):
     class FakeResponse:
         def __init__(self):

@@ -52,6 +52,8 @@ class Settings:
     minimax_max_completion_tokens: int = int(
         os.getenv("MINIMAX_MAX_COMPLETION_TOKENS", "16384")
     )
+    # Only M3.x-Flash models read this: low, medium, high, xhigh or max. Empty keeps the API default.
+    minimax_reasoning_effort: str = os.getenv("MINIMAX_REASONING_EFFORT", "").strip()
     minimax_image_model: str = os.getenv("MINIMAX_IMAGE_MODEL", "image-01")
     minimax_video_model: str = os.getenv(
         "MINIMAX_VIDEO_MODEL", "MiniMax-Hailuo-2.3"
