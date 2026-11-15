@@ -465,8 +465,13 @@ def parse_json_response(content: str) -> dict[str, Any]:
         return parsed
 
 
+_SENSITIVITY_FLAGS = ("input_sensitive", "input_sensitive_type", "output_sensitive", "output_sensitive_type")
+
+
 def _collect_stream(lines) -> dict[str, Any]:
     """Join server-sent chat chunks into one chat-completion body."""
+    chunks = 0
+    flags: dict[str, Any] = {}
     parts: list[str] = []
     final_message = ""
     finish_reason = None
@@ -483,6 +488,10 @@ def _collect_stream(lines) -> dict[str, Any]:
         if not isinstance(chunk, dict):
             continue
         usage = chunk.get("usage") or usage
+        chunks += 1
+        for flag in _SENSITIVITY_FLAGS:
+            if chunk.get(flag):
+                flags[flag] = chunk[flag]
         if isinstance(chunk.get("base_resp"), dict):
             base_resp = chunk["base_resp"]
         for choice in chunk.get("choices") or []:
@@ -504,6 +513,8 @@ def _collect_stream(lines) -> dict[str, Any]:
         body["usage"] = usage
     if base_resp:
         body["base_resp"] = base_resp
+    # Kept so an empty answer can say why: no chunks, a moderation flag, or a finish reason.
+    body["stream_summary"] = {"chunks": chunks, "finish_reason": finish_reason, **flags}
     return body
 
 
@@ -680,7 +691,10 @@ class CompatibleChatProvider(LLMProvider):
                 )
             choices = body.get("choices")
             if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-                raise LLMError(f"{self.name} returned no text choices")
+                detail = body.get("stream_summary") or {
+                    key: body[key] for key in _SENSITIVITY_FLAGS if body.get(key)
+                }
+                raise LLMError(f"{self.name} returned no text choices {detail}".rstrip(" {}"))
             message = choices[0].get("message")
             if not isinstance(message, dict):
                 raise LLMError(f"{self.name} returned no response message")

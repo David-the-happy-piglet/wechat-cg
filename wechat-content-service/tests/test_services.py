@@ -570,6 +570,18 @@ def test_minimax_text_reports_business_error_when_choices_are_null(monkeypatch, 
         raise AssertionError("Expected MiniMax business error")
 
 
+def test_an_empty_streamed_answer_says_why(monkeypatch):
+    moderated = {"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
+                 "output_sensitive": True, "output_sensitive_type": 3}
+    monkeypatch.setattr("app.services.llm.httpx.stream", lambda *args, **kwargs: FakeStream(lines=sse(moderated)))
+    provider = build_llm_provider(Settings(minimax_api_key="test-key", provider_max_attempts=1), "minimax")
+    with pytest.raises(LLMError) as error:
+        provider.generate_json("prompt")
+    message = str(error.value)
+    assert "returned no text choices" in message
+    assert "'output_sensitive': True" in message and "'chunks': 1" in message and "'finish_reason': 'stop'" in message
+
+
 def test_minimax_http_errors_surface_as_llm_errors(monkeypatch):
     monkeypatch.setattr(
         "app.services.llm.httpx.stream", lambda *args, **kwargs: FakeStream(status_code=502, lines=[]),
