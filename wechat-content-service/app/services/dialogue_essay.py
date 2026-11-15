@@ -257,7 +257,7 @@ def build_article_prompt(
 3. sections 只有一个元素，heading 为空字符串。paragraphs 按顺序放正文的每一段，一段一个字符串；段内换行写成 \\n，一个字符串里不要放两段。
 4. conclusion 是全文最后一拍：解惑体是“对读者说”，自述体是“收住”。可以用 \\n 分行。
 5. 生成{title_count}个不同的标题，selected_title 必须来自候选。
-6. 正文（opening、paragraphs、conclusion 合计）控制在目标长度的90%至110%，不为凑字数重复或注水。
+6. 正文（opening、paragraphs、conclusion 合计，标点也算）要写到{round(audience["article_length"] * 0.9)}至{round(audience["article_length"] * 1.1)}字。这种文章容易写短：照骨架每一拍的比例写足，朋友的经历和朋友的不服不要一带而过。不靠重复和空话凑字数。
 7. 生成{image_count}个无文字、无水印的图片提示词，第一张是封面。画面取两个人谈话的场景或典故里的意象，不画人脸特写。search_query 是2至5个英文关键词组成的字符串，不受“不用英文”的限制。
 
 返回结构：
@@ -306,8 +306,8 @@ def build_polish_prompt(
 9. “不是……而是……”超过三处的，把多出来的改成平常的说法。每一拍最多留一句漂亮话。
 10. 删掉把写作安排说出来的句子，例如“我没有急着讲道理”“这次说的是自己的事”“写到这里，该对你说几句了”。
 11. 解惑体里“我”的看法要放在引号里当面说给朋友听。写成旁白或“所以我说”这种转述的，改回对话。
-12. “我说：”“朋友说：”全篇超过十处，或者连着三句都标的，删掉多余的，改用一个动作带出说话的人，或者不标。
-13. 改完的正文保持在初稿的90%到110%。初稿明显短于{target_length}字的八成时，在“朋友讲自己的事”和“朋友不服”这两拍里补足具体的细节，不注水，不重复。
+12. 随便挑一句话，读者要能马上知道是谁说的。分不清的地方，用一个动作点明说话的人；“我说：”“朋友说：”连着三句都标的，删掉多余的。动作写在引号外面，不要放进引号。
+13. {_length_advice(article, target_length)}
 
 写作规范（对照用）：
 {STYLE_GUIDE}
@@ -317,6 +317,33 @@ def build_polish_prompt(
 待修订文章 JSON：
 {json.dumps(article, ensure_ascii=False)}
 """.strip()
+
+
+def body_length(article: dict[str, Any]) -> int:
+    """Characters in the body, punctuation included and line breaks excluded."""
+    sections = article.get("sections") or []
+    texts = [
+        str(article.get("opening") or ""),
+        *[str(paragraph) for section in sections for paragraph in section.get("paragraphs") or []],
+        str(article.get("conclusion") or ""),
+    ]
+    return sum(len("".join(text.split())) for text in texts)
+
+
+def _length_advice(article: dict[str, Any], target_length: int) -> str:
+    # Models cannot count their own output; the code can, so the editor is told the real gap.
+    current = body_length(article)
+    if current < target_length * 0.9:
+        return (
+            f"初稿正文{current}字，目标约{target_length}字，还差{target_length - current}字左右。"
+            "在“朋友讲自己的事”和“朋友不服”这两拍里补足具体的细节和对话，补到目标的九成以上，不注水，不重复。"
+        )
+    if current > target_length * 1.1:
+        return (
+            f"初稿正文{current}字，目标约{target_length}字，多了{current - target_length}字左右。"
+            "删掉重复的意思和多余的漂亮话，典故翻案、朋友不服和结尾这三处不删。"
+        )
+    return f"初稿正文{current}字，篇幅合适。改完保持在{round(current * 0.95)}到{round(current * 1.05)}字之间。"
 
 
 _CORNER_QUOTES = str.maketrans("「」『』", "“”‘’")

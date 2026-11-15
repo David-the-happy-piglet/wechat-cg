@@ -126,6 +126,7 @@ def test_article_prompt_carries_the_brief_and_only_the_named_allusion():
     )
     assert prompt.startswith("[EMOTIONAL_ARTICLE]")
     assert "目标长度：约2500字" in prompt and "标题吸引程度：3/5" in prompt
+    assert "要写到2250至2750字" in prompt
     assert "写法：解惑体。论点：想回去和还爱着是两回事。" in prompt
     for rule in ("这种文章在做什么", "写法一的骨架", "写法二的骨架", "典故怎么用", "朋友不是来捧场的", "不给大团圆"):
         assert rule in prompt
@@ -179,13 +180,20 @@ def test_polish_prompt_checks_the_form_against_the_same_allusion():
     )
     assert prompt.startswith("[EMOTIONAL_ARTICLE_POLISH]")
     assert "title_candidates、selected_title 和 image_prompts 原样保留" in prompt
-    assert "朋友有没有至少两次不服" in prompt and "初稿明显短于2000字的八成" in prompt
+    assert "朋友有没有至少两次不服" in prompt
+    # The draft is measured in code, because a model cannot count what it wrote.
+    assert "初稿正文6字，目标约2000字，还差1994字左右" in prompt
     assert re.findall(r"^## (.+)$", prompt, flags=re.MULTILINE) == ["烽火戏诸侯"]
     assert "论点：那句话被用轻了" in prompt
     assert json.dumps(draft, ensure_ascii=False) in prompt
     assert "Humanizer-zh" not in prompt and "心理学家" not in prompt
     unknown = build_humanizer_prompt({}, content_type="emotional_article", category=DIALOGUE_ESSAY_CATEGORY, topic="他不回消息")
-    assert "本篇典故不在典故库里" in unknown and "初稿明显短于2500字的八成" in unknown
+    assert "本篇典故不在典故库里" in unknown and "初稿正文0字，目标约2500字" in unknown
+    long_draft = {"opening": "问", "sections": [{"heading": "", "paragraphs": ["说，\n 话" * 1000]}], "conclusion": "收"}
+    assert dialogue_essay.body_length(long_draft) == 3002
+    assert "多了502字左右" in dialogue_essay.build_polish_prompt(long_draft)
+    fitting = {"opening": "问" * 2400, "sections": [], "conclusion": ""}
+    assert "初稿正文2400字，篇幅合适。改完保持在2280到2520字之间。" in dialogue_essay.build_polish_prompt(fitting)
 
 
 def test_normalize_article_only_touches_formatting():
