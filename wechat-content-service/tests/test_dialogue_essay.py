@@ -6,6 +6,7 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.content_workflows import get_content_workflow
 from app.database import SessionLocal
 from app.emotional_defaults import (
@@ -14,7 +15,7 @@ from app.emotional_defaults import (
     EMOTIONAL_DIRECTIONS,
 )
 from app.main import app
-from app.models import EmotionalTopicReview
+from app.models import Article, EmotionalTopicReview, GenerationRun
 from app.schemas import ArticleGenerateRequest
 from app.services import dialogue_essay
 from app.services.automation import _resolved_article_category
@@ -23,6 +24,7 @@ from app.services.humanizer import build_humanizer_prompt
 from app.services.llm import MockLLMProvider
 from app.services.prompts import build_emotional_article_prompt, build_emotional_topic_prompt
 from app.services.renderer import render_emotional_html
+from app.services.topic_reviews import approve_review, process_next_manual_review
 
 AUDIENCE = {"description": "恋爱中的读者", "article_length": 2500, "age_range": "18-40", "image_style": "无水印"}
 ENTRY_FIELDS = ("出处：", "通常读法：", "可用读法：", "对位：", "适合处境：", "边界：")
@@ -295,3 +297,32 @@ def test_dialogue_essay_is_selectable_and_reviewed_with_its_own_labels():
             # Nothing was typed, so the topic editor chose from this form's own directions.
             assert saved["directions"].startswith("恋爱里想不通、放不下的事")
             assert saved["request"]["topic"] == "自选一个恋爱里想不通的处境，配一个对得上位的典故"
+
+
+def test_an_approved_brief_reaches_the_draft_with_its_checked_allusion():
+    with TestClient(app) as client:
+        response = client.post("/admin/emotions/generate", data={
+            "category": DIALOGUE_ESSAY_CATEGORY, "idea": "想复合的人", "provider": "mock",
+            "target_length": "2500", "auto_upload_draft": "false",
+        }, follow_redirects=False)
+        review_id = int(response.headers["location"].rsplit("/", 1)[1])
+        with SessionLocal() as session:
+            assert approve_review(
+                session, review_id, "盖茨比的绿灯｜分手三年，他还留着她家楼下的停车卡",
+                "写法：解惑体。靶子：还想回去就是还爱她。论点：想要她，和想把中间那几年抹掉，是两回事。",
+            )
+            # Reviews approved by other tests may be queued ahead of this one.
+            review = process_next_manual_review(session, settings)
+            while review is not None and review.id != review_id:
+                review = process_next_manual_review(session, settings)
+            assert review is not None and review.status == "completed", review and review.error_message
+            article = session.get(Article, review.article_id)
+            assert (article.category, article.target_length) == (DIALOGUE_ESSAY_CATEGORY, 2500)
+            assert article.prompt_version == "dialogue-essay-v1"
+            draft_prompt = session.query(GenerationRun).filter_by(
+                article_id=article.id, step="emotional_article",
+            ).one().input_text
+        assert "选题：盖茨比的绿灯｜分手三年，他还留着她家楼下的停车卡" in draft_prompt
+        assert "论点：想要她，和想把中间那几年抹掉，是两回事。" in draft_prompt
+        assert re.findall(r"^## (.+)$", draft_prompt, flags=re.MULTILINE) == ["盖茨比的绿灯"]
+        assert "夜里望着她家码头尽头的那盏绿灯" in draft_prompt
