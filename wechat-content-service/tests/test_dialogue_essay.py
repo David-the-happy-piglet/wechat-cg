@@ -128,8 +128,10 @@ def test_article_prompt_carries_the_brief_and_only_the_named_allusion():
     assert "目标长度：约2500字" in prompt and "标题吸引程度：3/5" in prompt
     assert "要写到2250至2750字" in prompt
     assert "写法：解惑体。论点：想回去和还爱着是两回事。" in prompt
-    for rule in ("这种文章在做什么", "写法一的骨架", "写法二的骨架", "典故怎么用", "朋友不是来捧场的", "不给大团圆"):
+    for rule in ("这种文章在做什么", "写法一的骨架", "典故怎么用", "朋友不是来捧场的", "不给大团圆"):
         assert rule in prompt
+    # Only the skeleton of the form the brief asks for is sent.
+    assert "写法二的骨架" not in prompt
     assert "本篇典故（内容已核对，全篇只用这一个）" in prompt
     assert "舟已行矣，而剑不行，求剑若此，不亦惑乎？" in prompt
     assert re.findall(r"^## (.+)$", prompt, flags=re.MULTILINE) == ["刻舟求剑"]
@@ -348,3 +350,23 @@ def test_paragraph_lists_in_opening_and_conclusion_become_paragraphs():
     assert article["sections"][0]["paragraphs"] == ["朋友问我。", "我说：“不知道。”"]
     assert article["conclusion"] == "其实，\n没有那么多。\n\n出个声吧。"
     assert "其实，<br>没有那么多。<br><br>出个声吧。" in render_emotional_html(article, [], [])
+
+
+def test_the_guide_keeps_both_skeletons_unless_one_form_is_named():
+    both = dialogue_essay.guide_for("")
+    assert "写法一的骨架" in both and "写法二的骨架" in both
+    assert dialogue_essay.guide_for("用解惑体，也可以用自述体") == both
+    told = dialogue_essay.guide_for("写法：自述体。论点：……")
+    assert "写法二的骨架" in told and "写法一的骨架" not in told
+    assert len(told) < len(both) * 0.9
+    # Everything else in the brief is still there.
+    assert told.count("\n\n\n") == both.count("\n\n\n") - 1
+
+
+def test_polish_prompt_does_not_resend_the_whole_brief():
+    draft = {"opening": "问", "sections": [{"heading": "", "paragraphs": ["话"]}], "conclusion": "收"}
+    prompt = dialogue_essay.build_polish_prompt(draft, topic="烽火戏诸侯｜一吵架就说分手")
+    assert "写法一的骨架" not in prompt and "这种文章在做什么" not in prompt
+    assert "不用这些词：核心、本质" in prompt
+    assert "“狼来了”" in prompt and "你可以说……他可以说……" in prompt
+    assert len(prompt) < len(dialogue_essay.STYLE_GUIDE)

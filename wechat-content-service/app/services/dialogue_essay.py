@@ -30,6 +30,32 @@ STYLE_GUIDE = (
 )
 
 
+_SKELETONS = {"解惑体": "写法一的骨架", "自述体": "写法二的骨架"}
+_BANNED_WORDS = next(
+    line for line in STYLE_GUIDE.splitlines() if line.startswith("不用这些词：")
+)
+
+
+def _form_of(text: str) -> str | None:
+    """The form a brief asks for, when it names exactly one."""
+    named = [form for form in _SKELETONS if form in text]
+    return named[0] if len(named) == 1 else None
+
+
+def guide_for(instruction: str) -> str:
+    """The writing brief, without the skeleton of the form this essay does not use.
+
+    Every request counts against the provider's token rate limit, and the unused
+    skeleton is a sixth of the brief.
+    """
+    form = _form_of(instruction)
+    if form is None:
+        return STYLE_GUIDE
+    unused = next(header for name, header in _SKELETONS.items() if name != form)
+    sections = STYLE_GUIDE.split("\n\n\n")
+    return "\n\n\n".join(section for section in sections if not section.startswith(unused))
+
+
 @dataclass(frozen=True)
 class Allusion:
     name: str
@@ -246,7 +272,7 @@ def build_article_prompt(
 {instruction or "无"}
 """,
         source_section,
-        f"写作规范：\n{STYLE_GUIDE}",
+        f"写作规范：\n{guide_for(instruction)}",
         _allusion_section(topic, instruction, rng),
         sample_section,
         title_reference,
@@ -299,18 +325,17 @@ def build_polish_prompt(
 2. 论点是不是一句话，是不是在分清两样东西。含糊就改准，并让它在全文出现两次，说法不要一样。
 3. 朋友有没有至少两次不服，说得是不是在理。没有就补上。把“你说得对”“原来如此”“我懂了”这类附和改成一个动作或一句追问。
 4. 有没有一个人连着说了三百字以上。有就拆开，中间插进对方的一个动作、一句短话或一个问句。
-5. 典故的情节和下面的条目一致，引用的原句一字不差，新读法没有被说成原文本意。典故里的画面在最后一句还在。
-6. 删掉人名、年龄、城市、头衔，删掉“你应该”“建议你”“你要学会”，删掉规范里不用的词和任何编出来的名言、研究、数据。
+5. 典故的情节和下面的条目一致，引用的原句一字不差，新读法没有被说成原文本意。典故里的画面在最后一句还在。全篇只有这一个典故：顺手带出的第二个故事或俗语比喻（比如“狼来了”）删掉。
+6. 删掉人名、年龄、城市、头衔，删掉“你应该”“建议你”“你要学会”，删掉编出来的名言、研究、数据。{_BANNED_WORDS}
 7. 同一个动作出现超过两次的，换成别的动作，或者直接删掉。
 8. 结尾不许诺复合，不喊口号，不用“愿你”。
 9. “不是……而是……”超过三处的，把多出来的改成平常的说法。每一拍最多留一句漂亮话。
 10. 删掉把写作安排说出来的句子，例如“我没有急着讲道理”“这次说的是自己的事”“写到这里，该对你说几句了”。
 11. 解惑体里“我”的看法要放在引号里当面说给朋友听。写成旁白或“所以我说”这种转述的，改回对话。
 12. 随便挑一句话，读者要能马上知道是谁说的。分不清的地方，用一个动作点明说话的人；“我说：”“朋友说：”连着三句都标的，删掉多余的。动作写在引号外面，不要放进引号。
-13. {_length_advice(article, target_length)}
-
-写作规范（对照用）：
-{STYLE_GUIDE}
+13. 朋友的经历只留一个很小的起因和一个导火索，旁生的枝节（第三个人、另一场误会）删掉，省下的篇幅给细节和对话。
+14. 出路只能是一人一句能直接说出口的话。写成“你可以说……他可以说……”式沟通建议的段落，压成一两句对话。
+15. {_length_advice(article, target_length)}
 
 {allusion_section}
 

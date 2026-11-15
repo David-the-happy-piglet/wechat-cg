@@ -21,4 +21,6 @@ CI runs both, plus `alembic upgrade head && alembic check`. Scripts under `scrip
 - Anything a generated article cites must come from a checked library (`relationship_psychology_sources.md`, `dialogue_essay_allusions.md`). Check an entry against its source before adding it, and say in the entry what is traditional or disputed.
 - The repository is public. Reference essays and other people's text stay out of it; `prompts/samples/` is git-ignored for local few-shot samples.
 - Tests use the mock provider. A real provider needs its key in the environment; when a proxy injects the key, give the variable a placeholder such as `MINIMAX_API_KEY=proxy-injected`.
+- Every failure seen in a trial essay is logged in `prompts/README.md` with the rule that now prevents it. Keep those rules when editing prompts, and log new failures there.
+- MiniMax Token Plan counts the output cap against its rate limit, cuts non-streaming calls at about 30 s, and needs long pauses between long requests; details in `prompts/README.md`.
 - `scripts/write_dialogue_essays.py` runs topic, draft and polish without the database, and `scripts/essay_shape.py` compares an essay with a reference. Use both when changing `prompts/dialogue_essay.md`.
