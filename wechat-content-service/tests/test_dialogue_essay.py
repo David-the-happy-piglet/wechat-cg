@@ -150,7 +150,7 @@ def test_article_prompt_without_a_named_allusion_offers_a_few_full_entries():
     from app.emotional_defaults import DEFAULT_EMOTIONAL_STYLE_PROMPT
 
     prompt = article_prompt("异地恋里他总说等忙完这阵", source_instruction=DEFAULT_EMOTIONAL_STYLE_PROMPT)
-    assert "本篇没有指定典故库里的条目" in prompt
+    assert "本篇没有指定典故。典故不是必须的" in prompt
     assert len(re.findall(r"^## ", prompt, flags=re.MULTILINE)) == 6
     assert prompt.count("情节：") + prompt.count("原句：") >= 6
     # The admin form posts the resonance brief back untouched; it is not a request for this form.
@@ -406,3 +406,28 @@ def test_the_polish_pass_can_run_on_another_model():
     )
     assert seen == [("flagship", "[EMOTIONAL_ARTICLE]"), ("flash", "[EMOTIONAL_ARTICLE_POLISH]")]
     assert version == "dialogue-essay-v1-polished" and records[-1]["status"] == "completed"
+
+
+def test_an_essay_may_go_without_an_allusion():
+    assert dialogue_essay.declines_allusion("", "写法：自述体。典故：无，贯穿全文的是那条改了六遍的消息。")
+    assert dialogue_essay.declines_allusion("这一篇不用典故", "")
+    assert not dialogue_essay.declines_allusion("刻舟求剑｜想复合", "写法：解惑体。")
+
+    topic_prompt = build_emotional_topic_prompt(
+        directions="想复合的念头", category=DIALOGUE_ESSAY_CATEGORY, audience=AUDIENCE,
+        recent_topics=[], local_date="2026-11-16",
+    )
+    assert "典故不是必须的" in topic_prompt and "典故：无" in topic_prompt
+
+    brief = "写法：自述体。典故：无，贯穿全文的是那条改了六遍才发出去的消息。"
+    prompt = article_prompt("分手半年，她还留着那条没发出去的消息", source_instruction=brief)
+    assert "本篇不用典故" in prompt
+    assert not re.findall(r"^## ", prompt, flags=re.MULTILINE)
+    assert "典故不是必须的" in prompt  # from the writing brief itself
+
+    polish = dialogue_essay.build_polish_prompt(
+        {"opening": "问", "sections": [], "conclusion": "收"},
+        topic="分手半年，她还留着那条没发出去的消息", source_instruction=brief,
+    )
+    assert "本篇不用典故：正文里冒出来的典故" in polish
+    assert "用了典故的话，情节和下面的条目一致" in polish

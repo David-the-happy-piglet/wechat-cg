@@ -694,7 +694,7 @@ class CompatibleChatProvider(LLMProvider):
                 detail = body.get("stream_summary") or {
                     key: body[key] for key in _SENSITIVITY_FLAGS if body.get(key)
                 }
-                raise LLMError(f"{self.name} returned no text choices {detail}".rstrip(" {}"))
+                raise LLMError(f"{self.name} returned no text choices" + (f" {detail}" if detail else ""))
             message = choices[0].get("message")
             if not isinstance(message, dict):
                 raise LLMError(f"{self.name} returned no response message")
@@ -736,7 +736,9 @@ def _minimax_reasoning_payload(model: str, effort: str) -> dict[str, Any]:
         return {}
     if "flash" in name:
         # Flash models reason on every call and reject thinking=disabled; only the depth is adjustable.
-        return {"reasoning_effort": effort} if effort else {}
+        # The API default reasoned through a whole 8192-token budget on a polish request and
+        # returned no text (finish_reason=length), so an unset effort means medium.
+        return {"reasoning_effort": effort or "medium"}
     return {"thinking": {"type": "disabled"}}
 
 

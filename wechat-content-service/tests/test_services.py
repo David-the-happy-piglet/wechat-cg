@@ -525,7 +525,7 @@ def test_streamed_answer_can_arrive_whole_in_the_closing_chunk(monkeypatch):
 
 @pytest.mark.parametrize(("model", "effort", "expected"), [
     ("MiniMax-M3", "max", {"thinking": {"type": "disabled"}}),
-    ("MiniMax-M3.1-Flash", "", {}),
+    ("MiniMax-M3.1-Flash", "", {"reasoning_effort": "medium"}),
     ("MiniMax-M3.1-Flash", "xhigh", {"reasoning_effort": "xhigh"}),
     ("MiniMax-M2.7", "high", {}),
 ])
