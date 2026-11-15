@@ -50,6 +50,18 @@ def audience_to_context(audience: AudienceProfile) -> dict[str, Any]:
     }
 
 
+_ARTICLE_KEYS = frozenset({"title_candidates", "selected_title", "opening", "sections"})
+
+
+def _unwrap_article(result: Any) -> Any:
+    """Return the article when a model wraps it in one extra object, e.g. {"article": {...}}."""
+    if isinstance(result, dict) and not _ARTICLE_KEYS & set(result) and len(result) == 1:
+        inner = next(iter(result.values()))
+        if isinstance(inner, dict) and set(inner) >= _ARTICLE_KEYS:
+            return inner
+    return result
+
+
 def _validate_result(result: dict[str, Any]) -> None:
     required = {
         "title_candidates",
@@ -287,7 +299,7 @@ def _generate_health_article(
         "content_type": workflow.content_type,
     }
     started = time.monotonic()
-    draft_result = llm.generate_article(prompt, context)
+    draft_result = _unwrap_article(llm.generate_article(prompt, context))
     _validate_result(draft_result)
     _normalize_image_search_queries(draft_result, effective_topic)
     generation_runs = [
@@ -306,7 +318,7 @@ def _generate_health_article(
         humanizer_prompt = build_humanizer_prompt(draft_result)
         humanizer_started = time.monotonic()
         try:
-            humanized = llm.generate_article(humanizer_prompt, context)
+            humanized = _unwrap_article(llm.generate_article(humanizer_prompt, context))
             _validate_result(humanized)
             for preserved_key in (
                 "title_candidates",
@@ -381,7 +393,7 @@ def _generate_emotional_article(
         "content_type": workflow.content_type,
     }
     started = time.monotonic()
-    draft_result = llm.generate_article(prompt, context)
+    draft_result = _unwrap_article(llm.generate_article(prompt, context))
     _validate_result(draft_result)
     _normalize_image_search_queries(draft_result, effective_topic)
     generation_runs = [
@@ -408,7 +420,7 @@ def _generate_emotional_article(
         )
         humanizer_started = time.monotonic()
         try:
-            humanized = llm.generate_article(humanizer_prompt, context)
+            humanized = _unwrap_article(llm.generate_article(humanizer_prompt, context))
             _validate_result(humanized)
             for preserved_key in (
                 "title_candidates",

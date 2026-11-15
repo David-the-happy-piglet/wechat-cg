@@ -370,3 +370,14 @@ def test_polish_prompt_does_not_resend_the_whole_brief():
     assert "不用这些词：核心、本质" in prompt
     assert "“狼来了”" in prompt and "你可以说……他可以说……" in prompt
     assert len(prompt) < len(dialogue_essay.STYLE_GUIDE)
+
+
+def test_an_article_wrapped_in_one_extra_object_is_unwrapped():
+    from app.services.generator import _unwrap_article
+
+    article = {"title_candidates": ["甲"], "selected_title": "甲", "opening": "问", "sections": []}
+    assert _unwrap_article({"article": article}) is article
+    assert _unwrap_article(article) is article
+    # Anything else is left for validation to reject.
+    assert _unwrap_article({"article": {"opening": "问"}}) == {"article": {"opening": "问"}}
+    assert _unwrap_article({"a": article, "b": 1}) == {"a": article, "b": 1}

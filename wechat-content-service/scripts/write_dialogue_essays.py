@@ -61,11 +61,16 @@ class PatientProvider:
     def __getattr__(self, name):
         return getattr(self._provider, name)
 
+    # The last answer, kept so a malformed one can be saved for diagnosis.
+    last_answer = None
+
     def _patiently(self, call, *args, **kwargs):
         waited = 0.0
         while True:
             try:
-                return call(*args, **kwargs)
+                self.last_answer = None
+                self.last_answer = call(*args, **kwargs)
+                return self.last_answer
             except Exception as error:
                 limited = any(mark in str(error) for mark in RATE_LIMIT_MARKS)
                 if not limited or not self._wait or waited + self._wait > self._max_wait:
@@ -152,14 +157,28 @@ def main() -> None:
             target_length=audience["article_length"],
             humanize=not arguments.no_polish,
         )
-        article, runs, version = workflow.generate(
-            session=None,
-            llm=llm,
-            request=request,
-            effective_topic=request.topic,
-            audience_context=audience,
-            source_material="",
-        )
+        print(f"  选题：{topic}", flush=True)
+        try:
+            article, runs, version = workflow.generate(
+                session=None,
+                llm=llm,
+                request=request,
+                effective_topic=request.topic,
+                audience_context=audience,
+                source_material="",
+            )
+        except Exception as error:  # noqa: BLE001 - keep the batch going, keep the evidence
+            failed = arguments.out / f"{len(finished) + offset + 1:02d}-failed.json"
+            failed.write_text(
+                json.dumps(
+                    {"topic": topic, "brief": brief, "error": str(error), "raw_answer": llm.last_answer},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            print(f"  这一篇失败：{error}；模型原始返回存在 {failed.name}", flush=True)
+            continue
         recent.append(topic)
         tokens += sum(run.get("total_tokens") or 0 for run in runs)
         body = [
