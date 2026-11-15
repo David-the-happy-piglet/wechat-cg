@@ -381,3 +381,28 @@ def test_an_article_wrapped_in_one_extra_object_is_unwrapped():
     # Anything else is left for validation to reject.
     assert _unwrap_article({"article": {"opening": "问"}}) == {"article": {"opening": "问"}}
     assert _unwrap_article({"a": article, "b": 1}) == {"a": article, "b": 1}
+
+
+def test_the_polish_pass_can_run_on_another_model():
+    context = {"topic": "刻舟求剑｜想复合", "category": DIALOGUE_ESSAY_CATEGORY, "audience": AUDIENCE,
+               "title_count": 5, "image_count": 3, "content_type": "emotional_article"}
+    draft = MockLLMProvider().generate_article("[EMOTIONAL_ARTICLE]", context)
+    seen = []
+
+    class Recorder(MockLLMProvider):
+        def __init__(self, name):
+            self.name, self.model = name, name
+
+        def generate_article(self, prompt, ctx):
+            seen.append((self.name, prompt.split("\n", 1)[0]))
+            return deepcopy(draft)
+
+    request = ArticleGenerateRequest(topic=context["topic"], category=DIALOGUE_ESSAY_CATEGORY,
+                                     content_type="emotional_article", humanize=True)
+    _, records, version = _generate_emotional_article(
+        workflow=get_content_workflow("emotional_article"), session=None, llm=Recorder("flagship"),
+        request=request, effective_topic=context["topic"], audience_context=AUDIENCE, source_material="",
+        polish_llm=Recorder("flash"),
+    )
+    assert seen == [("flagship", "[EMOTIONAL_ARTICLE]"), ("flash", "[EMOTIONAL_ARTICLE_POLISH]")]
+    assert version == "dialogue-essay-v1-polished" and records[-1]["status"] == "completed"

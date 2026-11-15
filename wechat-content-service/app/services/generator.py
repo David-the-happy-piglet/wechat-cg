@@ -369,8 +369,11 @@ def _generate_emotional_article(
     effective_topic: str,
     audience_context: dict[str, Any],
     source_material: str,
+    polish_llm=None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+    """polish_llm, when given, runs the polish pass on another model than the draft."""
     del session
+    editor = polish_llm or llm
     prompt = build_emotional_article_prompt(
         topic=effective_topic,
         category=request.category,
@@ -408,7 +411,7 @@ def _generate_emotional_article(
 
     result = draft_result
     humanizer_applied = False
-    if request.humanize and llm.name != "mock":
+    if request.humanize and editor.name != "mock":
         humanizer_prompt = build_humanizer_prompt(
             draft_result,
             content_type=workflow.content_type,
@@ -420,7 +423,7 @@ def _generate_emotional_article(
         )
         humanizer_started = time.monotonic()
         try:
-            humanized = _unwrap_article(llm.generate_article(humanizer_prompt, context))
+            humanized = _unwrap_article(editor.generate_article(humanizer_prompt, context))
             _validate_result(humanized)
             for preserved_key in (
                 "title_candidates",
@@ -435,7 +438,7 @@ def _generate_emotional_article(
                     prompt=humanizer_prompt,
                     output=humanized,
                     started=humanizer_started,
-                    llm=llm,
+                    llm=editor,
                 )
             )
             humanizer_applied = True

@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -26,6 +27,11 @@ READERS = "恋爱中的男女，以女性读者为主，也覆盖暧昧、分手
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--provider", default="mock", help="mock, openai, deepseek, minimax, kimi, compatible …")
+    parser.add_argument(
+        "--models", default="",
+        help="MiniMax only: models for topic,draft,polish, e.g. MiniMax-M2.7-highspeed,MiniMax-M3,MiniMax-M3.1-Flash."
+        " A plan's rate limit may be counted per model, so spreading the steps can avoid waiting.",
+    )
     parser.add_argument("--count", type=int, default=1, help="essays to write when no --topic is given")
     parser.add_argument("--topic", help="“典故名｜处境” or any subject; skips the topic step")
     parser.add_argument("--brief", default="", help="写法、靶子、论点、落点、人物 for --topic")
@@ -111,11 +117,22 @@ def main() -> None:
     from app.services.renderer import render_emotional_html
 
     workflow = get_content_workflow("emotional_article")
-    llm = PatientProvider(
-        build_llm_provider(Settings(), arguments.provider),
-        arguments.rate_limit_wait,
-        arguments.rate_limit_max_wait,
-    )
+    def provider(model: str = ""):
+        settings = Settings()
+        if model:
+            if arguments.provider != "minimax":
+                raise SystemExit("--models only applies to --provider minimax")
+            settings = replace(settings, minimax_model=model)
+        return PatientProvider(
+            build_llm_provider(settings, arguments.provider),
+            arguments.rate_limit_wait,
+            arguments.rate_limit_max_wait,
+        )
+
+    models = [name.strip() for name in arguments.models.split(",")] if arguments.models else []
+    if models and len(models) != 3:
+        raise SystemExit("--models needs three names: topic,draft,polish")
+    topic_llm, llm, polish_llm = (provider(name) for name in models) if models else (provider(),) * 3
     audience = {
         "description": READERS,
         "article_length": arguments.length or dialogue_essay.DEFAULT_LENGTH,
@@ -136,7 +153,7 @@ def main() -> None:
             topic, brief = arguments.topic, arguments.brief
         else:
             try:
-                choice = llm.generate_json(
+                choice = topic_llm.generate_json(
                     workflow.build_topic_prompt(
                         directions=arguments.directions or DIALOGUE_ESSAY_DIRECTIONS,
                         category=DIALOGUE_ESSAY_CATEGORY,
@@ -150,7 +167,7 @@ def main() -> None:
                 print(f"  选题失败，跳过这一篇：{error}", flush=True)
                 continue
             topic, brief = str(choice["topic"]).strip(), str(choice.get("rationale", "")).strip()
-            tokens += llm.usage.total_tokens or 0
+            tokens += topic_llm.usage.total_tokens or 0
         request = ArticleGenerateRequest(
             content_type="emotional_article",
             category=DIALOGUE_ESSAY_CATEGORY,
@@ -170,6 +187,7 @@ def main() -> None:
                 effective_topic=request.topic,
                 audience_context=audience,
                 source_material="",
+                polish_llm=polish_llm,
             )
         except Exception as error:  # noqa: BLE001 - keep the batch going, keep the evidence
             failed = arguments.out / f"{len(finished) + offset + 1:02d}-failed.json"
@@ -202,7 +220,7 @@ def main() -> None:
                     "topic": topic,
                     "brief": brief,
                     "provider": llm.name,
-                    "model": llm.model,
+                    "models": {"topic": topic_llm.model, "draft": llm.model, "polish": polish_llm.model},
                     "prompt_version": version,
                     "steps": [{"step": run["step"], "status": run["status"]} for run in runs],
                     "article": article,
