@@ -53,6 +53,7 @@ The web application, article scheduler, and video worker run as separate process
 
 - **Separate HTTP, orchestration, and integrations.** Routes handle HTTP, the application layer coordinates use cases, services encapsulate writing, images, WeChat, and video capabilities, and models and repositories persist state.
 - **Workflows follow content types.** Health articles, relationship articles, and short horror fiction use their own topic selection and prompts. Audience profiles control style and length.
+- **Relationship articles switch form by direction.** The default is the resonance form; “清醒短句” drops scenes; “对话长文” is a late-night conversation between two friends that rereads one classic allusion, whose plot and quotable lines come from a checked library. See the [prompt directory notes](wechat-content-service/prompts/README.md) for the brief, the library and where reference essays go.
 - **Resume after failures.** Automated jobs save text before images. Image retries reuse the existing text, and draft upload retries reuse the existing article.
 - **Keep editorial review explicit.** The manual fiction workspace supports handoffs to an external Claude conversation and requires approval before sending a draft. Operators confirm final publication in WeChat.
 - **Validate contracts and runtime state.** Pydantic schemas, Alembic migrations, `/livez`, `/readyz`, and dedicated tests cover the main boundaries.
@@ -92,6 +93,12 @@ Run checks from `wechat-content-service`:
 ```bash
 python -m pytest
 python -m ruff check app tests migrations
+```
+
+To write dialogue essays straight to files, without the admin console or the database (for comparing models or trying a prompt change):
+
+```bash
+python scripts/write_dialogue_essays.py --env-file ../.env --provider deepseek --count 3
 ```
 
 Read the [migration guide](wechat-content-service/migrations/README.md) before upgrading an existing database. CI runs tests, migration checks, and Compose configuration validation with temporary databases, without connecting to a developer's local database.

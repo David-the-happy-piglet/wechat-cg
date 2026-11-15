@@ -15,9 +15,15 @@ CLEAR_SENTENCE_RULES = """本篇主要写法：清醒短句
 8. 保留要求的 JSON 结构和目标篇幅；图片提示词无文字、无水印。参考材料与历史任务中的场景写法不适用于本风格。"""
 CLEAR_SENTENCE_TITLE_REFERENCE = "【可选情感标题参考】优先用替读者说话的判断句或有准确含义的短句。25字以内、不用问号，内容必须兑现标题；不编故事、数字和对白，不为押韵牺牲准确度。"
 
+# Form categories select how an article is written, not what it is about; the subject comes from the idea or directions.
+DIALOGUE_ESSAY_CATEGORY = "对话长文"
+DIALOGUE_ESSAY_DIRECTIONS = "恋爱里想不通、放不下的事：明明相爱却走散，说不出口的话，等一个人，想复合的念头，付出没被看见。每篇借一个典故，推翻一个现成的解释。"
+EMOTIONAL_FORM_CATEGORIES = frozenset({CLEAR_SENTENCE_CATEGORY, DIALOGUE_ESSAY_CATEGORY})
+
 EMOTIONAL_DIRECTIONS = (
     "恋爱心理",
     CLEAR_SENTENCE_CATEGORY,
+    DIALOGUE_ESSAY_CATEGORY,
     "情感综合",
     "失恋主题",
     "情感安慰",
@@ -51,6 +57,11 @@ EMOTIONAL_DIRECTIONS = (
     "见家长和家里反对",
     "仪式感和纪念日",
     "网恋和线上认识",
+)
+
+# Subjects a topic editor may pick from; excludes the form categories so a model cannot switch form by itself.
+EMOTIONAL_SUBJECT_DIRECTIONS = tuple(
+    direction for direction in EMOTIONAL_DIRECTIONS if direction not in EMOTIONAL_FORM_CATEGORIES
 )
 
 EMOTIONAL_READER_CONTEXTS = (

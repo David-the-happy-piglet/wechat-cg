@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session, selectinload
 from ..config import Settings
 from ..content_workflows import get_content_workflow
 from ..emotional_defaults import (
-    CLEAR_SENTENCE_CATEGORY,
     DEFAULT_EMOTIONAL_CATEGORY,
+    EMOTIONAL_FORM_CATEGORIES,
     HEARTBREAK_CATEGORY,
 )
 from ..models import (
@@ -35,11 +35,13 @@ def _resolved_article_category(
     configured_category: str,
     generated_category: str | None,
 ) -> str:
-    if (
-        content_type == "emotional_article"
-        and configured_category.strip() in {HEARTBREAK_CATEGORY, DEFAULT_EMOTIONAL_CATEGORY, CLEAR_SENTENCE_CATEGORY}
-    ):
-        return configured_category.strip()
+    if content_type == "emotional_article":
+        configured = configured_category.strip()
+        if configured in {HEARTBREAK_CATEGORY, DEFAULT_EMOTIONAL_CATEGORY, *EMOTIONAL_FORM_CATEGORIES}:
+            return configured
+        # A form category changes how the article is written; only the plan may choose one.
+        if (generated_category or "").strip() in EMOTIONAL_FORM_CATEGORIES:
+            return configured_category
     return generated_category or configured_category
 
 

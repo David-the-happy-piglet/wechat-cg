@@ -148,3 +148,8 @@ data/
 backups/
 exports/
 tmp/
+
+# Reference essays used as local few-shot samples; they may be other people's writing
+wechat-content-service/prompts/samples/
+# Output of scripts/write_dialogue_essays.py
+wechat-content-service/dialogue-essays/

@@ -53,6 +53,7 @@ Web、文章调度器和视频 worker 是独立进程，共享数据库和生成
 
 - **业务与接入分层**：路由处理 HTTP，应用层协调用例，服务层封装写作、图片、微信和视频能力，模型与仓储持久化状态。
 - **按内容类型组织流程**：健康文章、情感文章、微恐小说使用各自的选题与提示词；受众画像控制风格与篇幅。
+- **情感文章按内容方向切换写法**：默认是共鸣型；“清醒短句”不写场景；“对话长文”写朋友夜谈加一个典故的新读法，典故的情节和原句来自已核对的典故库。规范、典故库和例文的放法见 [提示词目录说明](wechat-content-service/prompts/README.md)。
 - **失败后续跑**：自动任务先保存正文，再保存图片；补图重试复用已有正文，草稿上传重试复用已有文章。
 - **人工审阅**：微恐手动工作台支持外部 Claude 写作交接，正文审核通过后才可推送；微信正式发布仍由运营者确认。
 - **接口与运行检查**：Pydantic 契约、Alembic 迁移、`/livez`、`/readyz` 和独立测试覆盖主要边界。
@@ -88,6 +89,12 @@ uvicorn app.main:app --env-file ../.env --reload
 ```bash
 python -m pytest
 python -m ruff check app tests migrations
+```
+
+不经过管理界面和数据库，直接把对话长文写成文件（用于比较模型或试提示词）：
+
+```bash
+python scripts/write_dialogue_essays.py --env-file ../.env --provider deepseek --count 3
 ```
 
 已有数据库升级前请阅读 [迁移说明](wechat-content-service/migrations/README.md)。CI 使用临时数据库执行测试、迁移检查和 Compose 配置检查，不连接开发者本地数据库。

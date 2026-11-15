@@ -73,7 +73,7 @@ document.getElementById('wechat-check').addEventListener('click', async function
         {% endfor %}
       </select>
 
-      <p class="field-help">选择“清醒短句”：不描写具体场景，直接说透关系里的问题，每段不超过50字。其他方向使用共鸣型写法，默认侧重恋爱心理。只写恋爱和两个人之间的事，不写亲情、友情、职场。</p>
+      <p class="field-help">选择“清醒短句”：不描写具体场景，直接说透关系里的问题，每段不超过50字。选择“对话长文”：两个朋友夜里聊感情，借一个典故把一件想不通的事说通，约 2500 字；典故从已核对的典故库里选，也可以在主题里点名。其他方向使用共鸣型写法，默认侧重恋爱心理。只写恋爱和两个人之间的事，不写亲情、友情、职场。</p>
 
       <label for="idea">灵感 / 具体主题（可选）</label>
       <textarea id="idea" name="idea" maxlength="1000" style="min-height:105px"
@@ -156,6 +156,9 @@ document.getElementById('wechat-check').addEventListener('click', async function
       <p class="field-help">填写了具体主题时直接进入审阅，不再花 token 选题；留空时只生成一个选题。</p>
       <p><button type="submit" style="background:#a95f69">准备选题，进入审阅</button></p>
       <script>
+      document.getElementById('category').addEventListener('change', function () {
+        if (this.value === '对话长文') document.getElementById('target_length').value = '2500';
+      });
       const reviewCheckbox = document.querySelector('input[name="review_topic"][type="checkbox"]');
       reviewCheckbox.addEventListener('change', function () {
         document.getElementById('skip-topic-review').disabled = this.checked;
@@ -176,6 +179,7 @@ document.getElementById('wechat-check').addEventListener('click', async function
     <div class="principle"><strong>陪她看清，不布置任务。</strong><br>不写“你应该、建议你、学会……”，对方做了什么照实写，让读者自己判断。</div>
     <div class="principle"><strong>标题落在具体事物上。</strong><br>一句判断，25字以内，不用问号；消息、等待、道歉等细节要在正文中撑住标题。</div>
     <div class="principle"><strong>短段落，结尾留在眼前。</strong><br>每段一至三句，允许一句话一段；结尾停在一句话或一个画面，不喊口号。</div>
+    <div class="principle"><strong>对话长文：先推翻一个现成的解释。</strong><br>朋友问、“我”答，借一个典故的新读法，把“不够爱”“不合适”这类说法换成一句更准的话；朋友至少不服两次，结尾不许诺复合。写作规范在 prompts/dialogue_essay.md，典故库在 prompts/dialogue_essay_allusions.md。</div>
     <div class="principle"><strong>星座用于娱乐观察。</strong><br>写她为什么去查星座，或一个轻松的相处场景，不下定论、不贬低，也不劝她别信。</div>
   </section>
 </div>
@@ -206,7 +210,7 @@ document.getElementById('wechat-check').addEventListener('click', async function
             {{ plan.directions[:45] }}{% if plan.directions|length > 45 %}…{% endif %}
           </td>
           <td>每天 {{ plan.run_time }}<br><span class="muted">{{ plan.timezone }}</span></td>
-          <td>{{ plan.provider }}<br><span class="muted">约 {{ plan.target_length or plan.audience.article_length }} 字</span></td>
+          <td>{{ plan.provider }}<br><span class="muted">约 {{ plan.target_length or (dialogue_essay_length if plan.category == "对话长文" else plan.audience.article_length) }} 字</span></td>
           <td>
             {% if plan.auto_upload_draft %}<span class="tag">自动推送</span>{% else %}<span class="muted">仅生成</span>{% endif %}
           </td>
@@ -246,7 +250,7 @@ document.getElementById('wechat-check').addEventListener('click', async function
             {% if plan.category not in directions %}<option value="{{ plan.category }}" selected>{{ plan.category }}</option>{% endif %}
             {% for direction in directions %}<option value="{{ direction }}" {% if plan.category == direction %}selected{% endif %}>{{ direction }}</option>{% endfor %}
           </select>
-          <p class="field-help">默认侧重恋爱心理，保留共鸣细节和有出处的解释；选择“失恋主题”时固定写失恋处境；选择“清醒短句”时不写场景，每段不超过50字。</p>
+          <p class="field-help">默认侧重恋爱心理，保留共鸣细节和有出处的解释；选择“失恋主题”时固定写失恋处境；选择“清醒短句”时不写场景，每段不超过50字；选择“对话长文”时写朋友夜谈加一个典故，篇幅建议选默认或约 2500 字。</p>
         </div>
         <div>
           <label>文字模型</label>
@@ -306,7 +310,7 @@ document.getElementById('wechat-check').addEventListener('click', async function
           <textarea name="directions" required>{{ default_emotional_directions }}</textarea>
           <label>默认分类</label>
           <select name="category">{% for direction in directions %}<option value="{{ direction }}">{{ direction }}</option>{% endfor %}</select>
-          <p class="field-help">默认侧重恋爱心理，保留共鸣细节和有出处的解释；选择“失恋主题”时固定写失恋处境；选择“清醒短句”时不写场景，每段不超过50字。</p>
+          <p class="field-help">默认侧重恋爱心理，保留共鸣细节和有出处的解释；选择“失恋主题”时固定写失恋处境；选择“清醒短句”时不写场景，每段不超过50字；选择“对话长文”时写朋友夜谈加一个典故，篇幅建议选默认或约 2500 字。</p>
         </div>
         <div>
           <label>文字模型</label>

@@ -20,6 +20,7 @@ from ..models import (
     StoryOutlineDraft,
 )
 from ..schemas import ArticleGenerateRequest, StoryOutlineCreate
+from . import dialogue_essay
 from .humanizer import build_humanizer_prompt
 from .images import build_image_provider, normalize_search_query
 from .llm import build_llm_provider
@@ -403,6 +404,7 @@ def _generate_emotional_article(
             topic=effective_topic,
             source_instruction=request.source_prompt,
             emotional_title_reference=request.emotional_title_reference,
+            target_length=audience_context["article_length"],
         )
         humanizer_started = time.monotonic()
         try:
@@ -448,6 +450,13 @@ def _generate_emotional_article(
         if humanizer_applied
         else workflow.base_prompt_version
     )
+    if dialogue_essay.is_dialogue_essay(request.category):
+        dialogue_essay.normalize_article(result)
+        version = (
+            dialogue_essay.POLISHED_PROMPT_VERSION
+            if humanizer_applied
+            else dialogue_essay.PROMPT_VERSION
+        )
     return result, generation_runs, version
 
 
@@ -676,6 +685,13 @@ def generate_article(
 
     audience_context = audience_to_context(audience)
     target_length = request.target_length or audience_context["article_length"]
+    if (
+        not request.target_length
+        and request.content_type == "emotional_article"
+        and dialogue_essay.is_dialogue_essay(request.category)
+    ):
+        # The audience default suits short resonance pieces; this form needs room for its beats.
+        target_length = dialogue_essay.DEFAULT_LENGTH
     audience_context["article_length"] = target_length
     llm = build_llm_provider(settings, request.provider)
     workflow = get_content_workflow(request.content_type)

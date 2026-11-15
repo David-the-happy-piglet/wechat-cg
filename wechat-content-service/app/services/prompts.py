@@ -9,7 +9,7 @@ from ..emotional_defaults import (
     DEFAULT_EMOTIONAL_DIRECTIONS,
     DEFAULT_EMOTIONAL_IMAGE_STYLE,
     DEFAULT_EMOTIONAL_STYLE_PROMPT,
-    EMOTIONAL_DIRECTIONS,
+    EMOTIONAL_SUBJECT_DIRECTIONS,
     EMOTIONAL_TITLE_REFERENCE,
     HEARTBREAK_CATEGORY,
     PSYCHOLOGY_CATEGORIES,
@@ -22,6 +22,7 @@ from ..story_defaults import (
     STORY_EDITORIAL_RULES,
     folklore_story_guidance,
 )
+from . import dialogue_essay
 
 HEADLINE_INTENSITY_GUIDANCE = {
     1: "克制可信：直接说明主题和收益，少用悬念、反问、数字和情绪词。",
@@ -130,6 +131,13 @@ def build_emotional_topic_prompt(
     recent_topics: list[str],
     local_date: str,
 ) -> str:
+    if dialogue_essay.is_dialogue_essay(category):
+        return dialogue_essay.build_topic_prompt(
+            directions=directions,
+            audience=audience,
+            recent_topics=recent_topics,
+            local_date=local_date,
+        )
     recent = "\n".join(f"- {topic}" for topic in recent_topics) or "无"
     if category.strip() == CLEAR_SENTENCE_CATEGORY:
         return f"""[EMOTIONAL_ARTICLE_TOPIC]
@@ -189,7 +197,7 @@ def build_emotional_topic_prompt(
 5. 只返回 JSON，不要 Markdown。
 
 可选恋爱方向（只选与任务要求相符的一项）：
-{"、".join(EMOTIONAL_DIRECTIONS)}
+{"、".join(EMOTIONAL_SUBJECT_DIRECTIONS)}
 
 可供选题对应的心理学来源：
 {source_guidance}
@@ -321,6 +329,12 @@ def build_article_prompt(
 """.strip()
 
 
+def _custom_instruction(source_instruction: str) -> str:
+    """The admin form posts the default brief back unchanged; that is not a custom request."""
+    instruction = source_instruction.strip()
+    return "" if instruction == DEFAULT_EMOTIONAL_STYLE_PROMPT.strip() else instruction
+
+
 def build_emotional_article_prompt(
     *,
     topic: str,
@@ -342,6 +356,17 @@ def build_emotional_article_prompt(
         raise ValueError("headline_intensity must be between 1 and 5") from exc
 
     title_reference = (CLEAR_SENTENCE_TITLE_REFERENCE if short_style else EMOTIONAL_TITLE_REFERENCE) if emotional_title_reference else ""
+    if dialogue_essay.is_dialogue_essay(category):
+        return dialogue_essay.build_article_prompt(
+            topic=topic,
+            audience=audience,
+            title_count=title_count,
+            image_count=image_count,
+            headline_guidance=f"{headline_intensity}/5；{headline_guidance}",
+            title_reference=title_reference,
+            source_material=source_material,
+            source_instruction=_custom_instruction(source_instruction),
+        )
     source_section = ""
     if source_material.strip():
         source_section = f"""
@@ -352,11 +377,8 @@ def build_emotional_article_prompt(
 
 不得逐句改写、冒充原作者经历；有明确出处的经典短引可按引用规则保留。
 """.strip()
-    raw_instruction = source_instruction.strip()
-    instruction = (
-        ("按下方清醒短句规则写作。" if short_style else "按下方统一共鸣型 Prompt 写作。")
-        if not raw_instruction or raw_instruction == DEFAULT_EMOTIONAL_STYLE_PROMPT.strip()
-        else raw_instruction
+    instruction = _custom_instruction(source_instruction) or (
+        "按下方清醒短句规则写作。" if short_style else "按下方统一共鸣型 Prompt 写作。"
     )
     output_contract = {
         "title_candidates": [f"{title_count}个标题"],

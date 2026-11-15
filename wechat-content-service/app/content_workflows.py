@@ -167,7 +167,11 @@ _WORKFLOWS = {
         supports_story_modes=False,
         topic_prompt_builder=_emotional_topic_prompt,
         topic_system_prompt="你是克制、尊重边界的情感内容选题编辑。只输出合法 JSON，不要输出 Markdown。",
-        prompt_versions=("emotional-v3", "emotional-v3-humanized", "emotional-v4-resonance", "emotional-v4-resonance-humanized"),
+        prompt_versions=(
+            "emotional-v3", "emotional-v3-humanized",
+            "emotional-v4-resonance", "emotional-v4-resonance-humanized",
+            "dialogue-essay-v1", "dialogue-essay-v1-polished",
+        ),
         base_prompt_version="emotional-v4-resonance",
         enhanced_prompt_version="emotional-v4-resonance-humanized",
         renderer_name="emotional",

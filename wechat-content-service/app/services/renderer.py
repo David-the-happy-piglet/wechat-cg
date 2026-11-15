@@ -3,10 +3,11 @@ from typing import Any
 
 
 def _paragraph(text: str) -> str:
+    # Dialogue essays break lines inside a paragraph; HTML would otherwise collapse them.
     return (
         '<p style="font-size:18px;line-height:1.9;color:#333;'
         'margin:14px 0;text-align:justify;">'
-        f"{escape(text)}</p>"
+        f"{escape(text).replace(chr(10), '<br>')}</p>"
     )
 
 

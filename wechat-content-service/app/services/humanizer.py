@@ -8,6 +8,7 @@ from ..emotional_defaults import (
     PSYCHOLOGY_CATEGORIES,
     emotional_style_rules,
 )
+from . import dialogue_essay
 
 HUMANIZER_VERSION = "humanizer-zh-v1"
 
@@ -20,7 +21,15 @@ def build_humanizer_prompt(
     topic: str = "",
     source_instruction: str = "",
     emotional_title_reference: bool = False,
+    target_length: int | None = None,
 ) -> str:
+    if content_type == "emotional_article" and dialogue_essay.is_dialogue_essay(category):
+        return dialogue_essay.build_polish_prompt(
+            article,
+            topic=topic,
+            source_instruction=source_instruction,
+            target_length=target_length or dialogue_essay.DEFAULT_LENGTH,
+        )
     if content_type == "emotional_article":
         short_style = category.strip() == CLEAR_SENTENCE_CATEGORY
         title_reference = (

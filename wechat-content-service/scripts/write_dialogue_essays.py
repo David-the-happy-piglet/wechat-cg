@@ -1,0 +1,154 @@
+"""Write dialogue essays to files, without the database, images or WeChat.
+
+Each essay goes through the same steps as the admin console: a topic brief (unless one is
+given), the draft, then the polish pass. Use it to compare text models or to try a change
+to prompts/dialogue_essay.md before it reaches the scheduler.
+
+    python scripts/write_dialogue_essays.py --env-file ../.env --provider minimax --count 3
+    python scripts/write_dialogue_essays.py --provider deepseek \
+        --topic "刻舟求剑｜分手一年，他又去了两个人常去的那家面馆" \
+        --brief "写法：解惑体。靶子：还想回去就是还爱她。论点：想回去和还爱着是两回事。"
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+READERS = "恋爱中的男女，以女性读者为主，也覆盖暧昧、分手、复合与单身成长阶段"
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--provider", default="mock", help="mock, openai, deepseek, minimax, kimi, compatible …")
+    parser.add_argument("--count", type=int, default=1, help="essays to write when no --topic is given")
+    parser.add_argument("--topic", help="“典故名｜处境” or any subject; skips the topic step")
+    parser.add_argument("--brief", default="", help="写法、靶子、论点、落点、人物 for --topic")
+    parser.add_argument("--directions", help="what the topic step should choose from")
+    parser.add_argument("--length", type=int, help="target length in characters")
+    parser.add_argument("--no-polish", action="store_true", help="skip the polish pass")
+    parser.add_argument("--pause", type=float, default=0, help="seconds to wait between essays")
+    parser.add_argument("--out", type=Path, default=Path("dialogue-essays"))
+    parser.add_argument("--env-file", type=Path, help="KEY=VALUE file with provider keys")
+    return parser.parse_args()
+
+
+def load_environment(path: Path) -> None:
+    # Settings read the environment when the app package is imported, so this runs first.
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.strip().partition("=")
+        if separator and key and not key.startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip())
+
+
+def main() -> None:
+    arguments = parse_arguments()
+    if arguments.env_file:
+        load_environment(arguments.env_file)
+
+    from app.config import Settings
+    from app.content_workflows import get_content_workflow
+    from app.emotional_defaults import DIALOGUE_ESSAY_CATEGORY, DIALOGUE_ESSAY_DIRECTIONS
+    from app.schemas import ArticleGenerateRequest
+    from app.services import (
+        dialogue_essay,
+        generator,  # noqa: F401 - importing it registers the generation handlers
+    )
+    from app.services.llm import build_llm_provider
+    from app.services.renderer import render_emotional_html
+
+    workflow = get_content_workflow("emotional_article")
+    llm = build_llm_provider(Settings(), arguments.provider)
+    audience = {
+        "description": READERS,
+        "article_length": arguments.length or dialogue_essay.DEFAULT_LENGTH,
+        # Only the mock provider reads these two.
+        "age_range": "18-40",
+        "image_style": "无文字",
+    }
+    arguments.out.mkdir(parents=True, exist_ok=True)
+    finished = sorted(arguments.out.glob("*.json"))
+    # Earlier runs in the same folder count as recent, so batches keep moving through the library.
+    recent = [json.loads(path.read_text(encoding="utf-8"))["topic"] for path in finished]
+
+    for offset in range(1 if arguments.topic else arguments.count):
+        if offset and arguments.pause:
+            time.sleep(arguments.pause)
+        tokens = 0
+        if arguments.topic:
+            topic, brief = arguments.topic, arguments.brief
+        else:
+            choice = llm.generate_json(
+                workflow.build_topic_prompt(
+                    directions=arguments.directions or DIALOGUE_ESSAY_DIRECTIONS,
+                    category=DIALOGUE_ESSAY_CATEGORY,
+                    audience=audience,
+                    recent_topics=recent[-30:],
+                    local_date=date.today().isoformat(),
+                ),
+                system_prompt=workflow.topic_system_prompt,
+            )
+            topic, brief = str(choice["topic"]).strip(), str(choice.get("rationale", "")).strip()
+            tokens += llm.usage.total_tokens or 0
+        request = ArticleGenerateRequest(
+            content_type="emotional_article",
+            category=DIALOGUE_ESSAY_CATEGORY,
+            topic=topic[:300],
+            source_prompt=f"选题的切入点：{brief}" if brief else "",
+            audience_slug="relationship-readers",
+            provider=arguments.provider,
+            target_length=audience["article_length"],
+            humanize=not arguments.no_polish,
+        )
+        article, runs, version = workflow.generate(
+            session=None,
+            llm=llm,
+            request=request,
+            effective_topic=request.topic,
+            audience_context=audience,
+            source_material="",
+        )
+        recent.append(topic)
+        tokens += sum(run.get("total_tokens") or 0 for run in runs)
+        body = [
+            article["opening"],
+            *[paragraph for section in article["sections"] for paragraph in section["paragraphs"]],
+            article["conclusion"],
+        ]
+        allusion = dialogue_essay.find_allusion(topic, brief)
+        stem = arguments.out / f"{len(finished) + offset + 1:02d}-{allusion.name if allusion else 'essay'}"
+        stem.with_suffix(".txt").write_text(
+            article["selected_title"] + "\n\n" + "\n\n".join(body) + "\n", encoding="utf-8"
+        )
+        stem.with_suffix(".html").write_text(render_emotional_html(article, [], []), encoding="utf-8")
+        stem.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "topic": topic,
+                    "brief": brief,
+                    "provider": llm.name,
+                    "model": llm.model,
+                    "prompt_version": version,
+                    "steps": [{"step": run["step"], "status": run["status"]} for run in runs],
+                    "article": article,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        failed = [run["step"] for run in runs if run["status"] != "completed"]
+        print(
+            f"{stem.name}.txt  《{article['selected_title']}》  "
+            f"{sum(len(paragraph) for paragraph in body)}字 {len(body)}段  {llm.model}  {tokens} tokens"
+            + (f"  未完成：{'、'.join(failed)}" if failed else "")
+        )
+
+
+if __name__ == "__main__":
+    main()
