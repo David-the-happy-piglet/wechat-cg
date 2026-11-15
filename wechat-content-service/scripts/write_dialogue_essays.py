@@ -33,9 +33,52 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--length", type=int, help="target length in characters")
     parser.add_argument("--no-polish", action="store_true", help="skip the polish pass")
     parser.add_argument("--pause", type=float, default=0, help="seconds to wait between essays")
+    parser.add_argument(
+        "--rate-limit-wait", type=float, default=300,
+        help="seconds to wait before retrying a request the provider refused for rate limits (0: no retry)",
+    )
+    parser.add_argument("--rate-limit-max-wait", type=float, default=3600, help="give up a request after this long")
     parser.add_argument("--out", type=Path, default=Path("dialogue-essays"))
     parser.add_argument("--env-file", type=Path, help="KEY=VALUE file with provider keys")
     return parser.parse_args()
+
+
+RATE_LIMIT_MARKS = ("2062", "rate_limit", "速率限制", "429")
+
+
+class PatientProvider:
+    """Retries a request the provider refused for rate limits instead of failing the essay.
+
+    Subscription plans such as MiniMax Token Plan refuse the next long request for many
+    minutes after a successful one; topic, draft and polish come one after another.
+    """
+
+    def __init__(self, provider, wait: float, max_wait: float):
+        self._provider = provider
+        self._wait = wait
+        self._max_wait = max_wait
+
+    def __getattr__(self, name):
+        return getattr(self._provider, name)
+
+    def _patiently(self, call, *args, **kwargs):
+        waited = 0.0
+        while True:
+            try:
+                return call(*args, **kwargs)
+            except Exception as error:
+                limited = any(mark in str(error) for mark in RATE_LIMIT_MARKS)
+                if not limited or not self._wait or waited + self._wait > self._max_wait:
+                    raise
+                print(f"  {time.strftime('%H:%M:%S')} 被限流，{self._wait:.0f} 秒后重试", flush=True)
+                time.sleep(self._wait)
+                waited += self._wait
+
+    def generate_json(self, *args, **kwargs):
+        return self._patiently(self._provider.generate_json, *args, **kwargs)
+
+    def generate_article(self, *args, **kwargs):
+        return self._patiently(self._provider.generate_article, *args, **kwargs)
 
 
 def load_environment(path: Path) -> None:
@@ -63,7 +106,11 @@ def main() -> None:
     from app.services.renderer import render_emotional_html
 
     workflow = get_content_workflow("emotional_article")
-    llm = build_llm_provider(Settings(), arguments.provider)
+    llm = PatientProvider(
+        build_llm_provider(Settings(), arguments.provider),
+        arguments.rate_limit_wait,
+        arguments.rate_limit_max_wait,
+    )
     audience = {
         "description": READERS,
         "article_length": arguments.length or dialogue_essay.DEFAULT_LENGTH,
