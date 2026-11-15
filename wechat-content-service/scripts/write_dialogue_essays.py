@@ -135,16 +135,20 @@ def main() -> None:
         if arguments.topic:
             topic, brief = arguments.topic, arguments.brief
         else:
-            choice = llm.generate_json(
-                workflow.build_topic_prompt(
-                    directions=arguments.directions or DIALOGUE_ESSAY_DIRECTIONS,
-                    category=DIALOGUE_ESSAY_CATEGORY,
-                    audience=audience,
-                    recent_topics=recent[-30:],
-                    local_date=date.today().isoformat(),
-                ),
-                system_prompt=workflow.topic_system_prompt,
-            )
+            try:
+                choice = llm.generate_json(
+                    workflow.build_topic_prompt(
+                        directions=arguments.directions or DIALOGUE_ESSAY_DIRECTIONS,
+                        category=DIALOGUE_ESSAY_CATEGORY,
+                        audience=audience,
+                        recent_topics=recent[-30:],
+                        local_date=date.today().isoformat(),
+                    ),
+                    system_prompt=workflow.topic_system_prompt,
+                )
+            except Exception as error:  # noqa: BLE001 - one refused topic should not end the batch
+                print(f"  选题失败，跳过这一篇：{error}", flush=True)
+                continue
             topic, brief = str(choice["topic"]).strip(), str(choice.get("rationale", "")).strip()
             tokens += llm.usage.total_tokens or 0
         request = ArticleGenerateRequest(
