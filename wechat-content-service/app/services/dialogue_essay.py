@@ -371,6 +371,16 @@ def body_length(article: dict[str, Any]) -> int:
     return sum(len("".join(text.split())) for text in texts)
 
 
+def check_polish_length(draft: dict[str, Any], polished: dict[str, Any]) -> None:
+    """Reject a polish pass that rewrote the essay instead of editing it.
+
+    MiniMax-M3.1-Flash once returned a 500-character essay for a 2,700-character draft.
+    """
+    before, after = body_length(draft), body_length(polished)
+    if before and not 0.85 * before <= after <= 1.2 * before:
+        raise ValueError(f"polish changed the body from {before} to {after} characters; draft kept")
+
+
 def _length_advice(article: dict[str, Any], target_length: int) -> str:
     # Models cannot count their own output; the code can, so the editor is told the real gap.
     current = body_length(article)

@@ -62,6 +62,26 @@ def _unwrap_article(result: Any) -> Any:
     return result
 
 
+def _fill_missing_image_prompts(result: Any, image_count: int, topic: str) -> None:
+    """Give a complete relationship article default picture prompts instead of discarding it.
+
+    MiniMax-M3 once returned a whole 2,700-character essay without image_prompts.
+    """
+    if not isinstance(result, dict) or result.get("image_prompts"):
+        return
+    from ..emotional_defaults import DEFAULT_EMOTIONAL_IMAGE_STYLE
+
+    result["image_prompts"] = [
+        {
+            "position": index,
+            "asset_type": "cover" if index == 0 else "inline",
+            "prompt": f"{DEFAULT_EMOTIONAL_IMAGE_STYLE}，两个人夜里谈话的场景，不画人脸特写，主题：{topic}",
+            "search_query": "two friends talking night",
+        }
+        for index in range(image_count)
+    ]
+
+
 def _validate_result(result: dict[str, Any]) -> None:
     required = {
         "title_candidates",
@@ -397,6 +417,7 @@ def _generate_emotional_article(
     }
     started = time.monotonic()
     draft_result = _unwrap_article(llm.generate_article(prompt, context))
+    _fill_missing_image_prompts(draft_result, request.image_count, effective_topic)
     _validate_result(draft_result)
     _normalize_image_search_queries(draft_result, effective_topic)
     generation_runs = [
@@ -424,7 +445,10 @@ def _generate_emotional_article(
         humanizer_started = time.monotonic()
         try:
             humanized = _unwrap_article(editor.generate_article(humanizer_prompt, context))
+            _fill_missing_image_prompts(humanized, request.image_count, effective_topic)
             _validate_result(humanized)
+            if dialogue_essay.is_dialogue_essay(request.category):
+                dialogue_essay.check_polish_length(draft_result, humanized)
             for preserved_key in (
                 "title_candidates",
                 "selected_title",

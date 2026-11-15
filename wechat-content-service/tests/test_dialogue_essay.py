@@ -431,3 +431,51 @@ def test_an_essay_may_go_without_an_allusion():
     )
     assert "本篇不用典故：正文里冒出来的典故" in polish
     assert "用了典故的话，情节和下面的条目一致" in polish
+
+
+def test_a_polish_that_rewrites_the_essay_is_rejected_and_the_draft_kept():
+    context = {"topic": "卡珊德拉｜她说了三次不开心", "category": DIALOGUE_ESSAY_CATEGORY, "audience": AUDIENCE,
+               "title_count": 5, "image_count": 3, "content_type": "emotional_article"}
+    draft = MockLLMProvider().generate_article("[EMOTIONAL_ARTICLE]", context)
+    draft["sections"] = [{"heading": "", "paragraphs": ["“她说了好几次。”" * 20]}]
+    short = deepcopy(draft)
+    short["sections"] = [{"heading": "", "paragraphs": ["“她说过。”"]}]
+    answers = [deepcopy(draft), short]
+
+    class Provider(MockLLMProvider):
+        name = "test"
+
+        def generate_article(self, prompt, ctx):
+            return answers.pop(0)
+
+    request = ArticleGenerateRequest(topic=context["topic"], category=DIALOGUE_ESSAY_CATEGORY,
+                                     content_type="emotional_article", humanize=True)
+    article, records, version = _generate_emotional_article(
+        workflow=get_content_workflow("emotional_article"), session=None, llm=Provider(),
+        request=request, effective_topic=context["topic"], audience_context=AUDIENCE, source_material="",
+    )
+    assert version == "dialogue-essay-v1"
+    assert records[-1]["status"] == "failed" and "draft kept" in records[-1]["error_message"]
+    assert dialogue_essay.body_length(article) == dialogue_essay.body_length(draft)
+
+
+def test_a_complete_article_without_picture_prompts_gets_default_ones():
+    context = {"topic": "梁祝十八相送｜她暗示了三次", "category": DIALOGUE_ESSAY_CATEGORY, "audience": AUDIENCE,
+               "title_count": 5, "image_count": 3, "content_type": "emotional_article"}
+    draft = MockLLMProvider().generate_article("[EMOTIONAL_ARTICLE]", context)
+    del draft["image_prompts"]
+
+    class Provider(MockLLMProvider):
+        name = "test"
+
+        def generate_article(self, prompt, ctx):
+            return deepcopy(draft)
+
+    request = ArticleGenerateRequest(topic=context["topic"], category=DIALOGUE_ESSAY_CATEGORY,
+                                     content_type="emotional_article", humanize=False, image_count=3)
+    article, _, _ = _generate_emotional_article(
+        workflow=get_content_workflow("emotional_article"), session=None, llm=Provider(),
+        request=request, effective_topic=context["topic"], audience_context=AUDIENCE, source_material="",
+    )
+    assert [image["asset_type"] for image in article["image_prompts"]] == ["cover", "inline", "inline"]
+    assert all("无文字" in image["prompt"] for image in article["image_prompts"])
