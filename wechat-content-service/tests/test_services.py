@@ -570,6 +570,17 @@ def test_minimax_text_reports_business_error_when_choices_are_null(monkeypatch, 
         raise AssertionError("Expected MiniMax business error")
 
 
+@pytest.mark.parametrize(("model", "path", "cap"), [
+    ("MiniMax-M3", "/text/chatcompletion_v2", 8192),
+    ("MiniMax-M3.1-Flash", "/chat/completions", 8192),
+    ("MiniMax-M2.7-highspeed", "/chat/completions", 8192),
+    ("abab6.5s-chat", "/chat/completions", 2048),
+])
+def test_minimax_models_use_the_endpoint_that_serves_them(model, path, cap):
+    provider = build_llm_provider(Settings(minimax_api_key="test-key", minimax_model=model), "minimax")
+    assert (provider.endpoint_path, provider.max_output_tokens) == (path, cap)
+
+
 def test_an_empty_streamed_answer_says_why(monkeypatch):
     moderated = {"choices": [{"delta": {"content": ""}, "finish_reason": "stop"}],
                  "output_sensitive": True, "output_sensitive_type": 3}

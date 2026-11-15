@@ -222,7 +222,10 @@ def main() -> None:
                     "provider": llm.name,
                     "models": {"topic": topic_llm.model, "draft": llm.model, "polish": polish_llm.model},
                     "prompt_version": version,
-                    "steps": [{"step": run["step"], "status": run["status"]} for run in runs],
+                    "steps": [
+                        {key: run[key] for key in ("step", "status", "error_message") if run.get(key)}
+                        for run in runs
+                    ],
                     "article": article,
                 },
                 ensure_ascii=False,

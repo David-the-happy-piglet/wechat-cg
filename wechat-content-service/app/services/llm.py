@@ -721,6 +721,15 @@ class CompatibleChatProvider(LLMProvider):
             raise LLMError(f"{self.name} request failed: {exc}{detail}") from exc
 
 
+def _minimax_endpoint(model: str) -> str:
+    name = model.lower()
+    # Flash models fail long requests on chatcompletion_v2 (status 1000) but work on the
+    # OpenAI-compatible path; MiniMax-M3 itself is served on chatcompletion_v2.
+    if name.startswith("minimax-m3") and "flash" not in name:
+        return "/text/chatcompletion_v2"
+    return "/chat/completions"
+
+
 def _minimax_reasoning_payload(model: str, effort: str) -> dict[str, Any]:
     name = model.lower()
     if not name.startswith("minimax-m3"):
@@ -791,14 +800,10 @@ def _provider_config(settings: Settings, provider_name: str) -> ChatProviderConf
             max_tokens_field="max_completion_tokens",
             max_output_tokens=(
                 settings.minimax_max_completion_tokens
-                if settings.minimax_model.lower().startswith("minimax-m3")
+                if settings.minimax_model.lower().startswith(("minimax-m3", "minimax-m2"))
                 else 2048
             ),
-            endpoint_path=(
-                "/text/chatcompletion_v2"
-                if settings.minimax_model.lower().startswith("minimax-m3")
-                else "/chat/completions"
-            ),
+            endpoint_path=_minimax_endpoint(settings.minimax_model),
             extra_payload=_minimax_reasoning_payload(
                 settings.minimax_model,
                 settings.minimax_reasoning_effort,
