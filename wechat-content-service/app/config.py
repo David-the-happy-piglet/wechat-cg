@@ -50,7 +50,7 @@ class Settings:
     minimax_api_key: str = os.getenv("MINIMAX_API_KEY", "")
     minimax_model: str = os.getenv("MINIMAX_MODEL", "MiniMax-M3")
     minimax_max_completion_tokens: int = int(
-        os.getenv("MINIMAX_MAX_COMPLETION_TOKENS", "16384")
+        os.getenv("MINIMAX_MAX_COMPLETION_TOKENS", "8192")
     )
     # Only M3.x-Flash models read this: low, medium, high, xhigh or max. Empty keeps the API default.
     minimax_reasoning_effort: str = os.getenv("MINIMAX_REASONING_EFFORT", "").strip()

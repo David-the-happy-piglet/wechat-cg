@@ -508,7 +508,7 @@ def test_minimax_m3_uses_standard_endpoint_and_larger_output_budget(monkeypatch)
     assert captured["url"] == "https://api.minimaxi.com/v1/text/chatcompletion_v2"
     assert captured["payload"]["stream"] is True
     assert captured["payload"]["thinking"] == {"type": "disabled"}
-    assert captured["payload"]["max_completion_tokens"] == 16384
+    assert captured["payload"]["max_completion_tokens"] == 8192
     assert provider.usage.total_tokens == 13
 
 

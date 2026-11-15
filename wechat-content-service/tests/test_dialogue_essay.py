@@ -334,3 +334,17 @@ def test_an_approved_brief_reaches_the_draft_with_its_checked_allusion():
         assert "论点：想要她，和想把中间那几年抹掉，是两回事。" in draft_prompt
         assert re.findall(r"^## (.+)$", draft_prompt, flags=re.MULTILINE) == ["盖茨比的绿灯"]
         assert "夜里望着她家码头尽头的那盏绿灯" in draft_prompt
+
+
+def test_paragraph_lists_in_opening_and_conclusion_become_paragraphs():
+    # MiniMax-M3 returned the closing beat as a list of paragraphs.
+    article = {
+        "opening": ["“你说呢？”", "朋友问我。"],
+        "sections": [{"heading": "", "paragraphs": ["我说：“不知道。”"]}],
+        "conclusion": ["其实，\n没有那么多。", "出个声吧。"],
+    }
+    dialogue_essay.normalize_article(article)
+    assert article["opening"] == "“你说呢？”"
+    assert article["sections"][0]["paragraphs"] == ["朋友问我。", "我说：“不知道。”"]
+    assert article["conclusion"] == "其实，\n没有那么多。\n\n出个声吧。"
+    assert "其实，<br>没有那么多。<br><br>出个声吧。" in render_emotional_html(article, [], [])

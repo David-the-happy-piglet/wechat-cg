@@ -376,9 +376,17 @@ def _paragraphs(text: str) -> list[str]:
     return [_curl(_curl(block, '"', "“", "”"), "'", "‘", "’") for block in blocks if block]
 
 
+def _as_text(value: Any) -> str:
+    # Models asked for one multi-paragraph string sometimes return a list of paragraphs.
+    if isinstance(value, list):
+        return "\n\n".join(str(item) for item in value)
+    return str(value or "")
+
+
 def normalize_article(article: dict[str, Any]) -> None:
     """Fix mechanical formatting only; every word and its order are kept."""
-    opening = _paragraphs(article["opening"])
+    article["conclusion"] = _as_text(article.get("conclusion"))
+    opening = _paragraphs(_as_text(article.get("opening")))
     for section in article["sections"]:
         section["heading"] = ""
         section["paragraphs"] = [
